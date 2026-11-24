@@ -61,6 +61,7 @@ import com.example.data.model.CallerProfileTarget
 import com.example.data.model.FavoriteGroup
 import com.example.data.telephony.PhoneNumberInfoHelper
 import com.example.ui.ShajamalViewModel
+import com.example.ui.components.SecurityPinLockOverlay
 import com.example.ui.components.SimPickerBottomSheet
 import com.example.ui.components.ThemeBackdrop
 import com.example.ui.navigation.ShajamalRoutes
@@ -69,8 +70,12 @@ import com.example.ui.screens.ContactProfileScreen
 import com.example.ui.screens.ContactsScreen
 import com.example.ui.screens.DialerScreen
 import com.example.ui.screens.FavoritesScreen
+import com.example.ui.screens.HiddenHistoryScreen
+import com.example.ui.screens.PrivacyDashboardScreen
+import com.example.ui.screens.PrivateContactsScreen
 import com.example.ui.screens.RecentsScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.SpamDatabaseScreen
 import com.example.ui.screens.ThemesScreen
 import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.ShajamalTheme
@@ -130,6 +135,11 @@ private fun ShajamalApp(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
+    val communityReports by viewModel.communityReports.collectAsStateWithLifecycle()
+    val privateContacts by viewModel.privateContacts.collectAsStateWithLifecycle()
+    val hiddenCalls by viewModel.hiddenCalls.collectAsStateWithLifecycle()
+    val isAppLocked by viewModel.isAppLocked.collectAsStateWithLifecycle()
+    val isSettingsLockRequired by viewModel.isSettingsLockRequired.collectAsStateWithLifecycle()
     val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
     val numberGroups by viewModel.numberGroups.collectAsStateWithLifecycle()
     val activeProfileTarget by viewModel.activeProfileTarget.collectAsStateWithLifecycle()
@@ -271,7 +281,17 @@ private fun ShajamalApp(
                 val showChrome = currentRoute != ShajamalRoutes.SETTINGS &&
                     currentRoute != ShajamalRoutes.THEMES &&
                     currentRoute != ShajamalRoutes.BLOCK_LIST &&
-                    currentRoute != ShajamalRoutes.CONTACT_PROFILE
+                    currentRoute != ShajamalRoutes.CONTACT_PROFILE &&
+                    currentRoute != ShajamalRoutes.PRIVACY_DASHBOARD &&
+                    currentRoute != ShajamalRoutes.PRIVATE_CONTACTS &&
+                    currentRoute != ShajamalRoutes.HIDDEN_HISTORY &&
+                    currentRoute != ShajamalRoutes.SPAM_DATABASE
+
+                LaunchedEffect(showChrome) {
+                    if (showChrome) {
+                        viewModel.lockSettingsSession()
+                    }
+                }
 
                 Scaffold(
                     containerColor = Color.Transparent,
@@ -359,6 +379,9 @@ private fun ShajamalApp(
                                         blockedNumbers = blockedNumbers,
                                         numberNotes = numberNotes,
                                         permissions = permissions,
+                                        settings = settings,
+                                        communityReports = communityReports,
+                                        privateContacts = privateContacts,
                                         onSelectFilter = viewModel::setCallLogFilter,
                                         onSearchQueryChange = viewModel::setRecentsSearchQuery,
                                         onCallChooseSim = viewModel::openSimPickerForNumber,
@@ -375,6 +398,7 @@ private fun ShajamalApp(
                                                 viewModel.blockNumber(num)
                                             }
                                         },
+                                        onSubmitSpamReport = viewModel::reportSpamNumber,
                                         onDeleteEntry = viewModel::deleteCallLogItem,
                                         onDeleteMultiple = viewModel::deleteMultipleCallLogs,
                                         onOpenFullProfile = { group ->
@@ -390,6 +414,9 @@ private fun ShajamalApp(
                                         },
                                         onOpenSettings = {
                                             navController.navigate(ShajamalRoutes.SETTINGS)
+                                        },
+                                        onOpenPrivacyDashboard = {
+                                            navController.navigate(ShajamalRoutes.PRIVACY_DASHBOARD)
                                         },
                                         onRequestPermissions = {
                                             permissionsLauncher.launch(requiredPermissions)
@@ -482,35 +509,126 @@ private fun ShajamalApp(
                                 }
 
                                 composable(ShajamalRoutes.SETTINGS) {
-                                    SettingsScreen(
-                                        settings = settings,
-                                        simSlots = simSlots,
-                                        blockedCount = blockedNumbers.size,
-                                        isDefaultDialer = isDefaultDialer,
-                                        permissions = permissions,
+                                    if (isSettingsLockRequired) {
+                                        SecurityPinLockOverlay(
+                                            title = strings.pinProtectedSettingsTitle,
+                                            subtitle = strings.unlockSettingsPrompt,
+                                            allowDismiss = true,
+                                            onDismiss = { navController.popBackStack() },
+                                            onVerifyPin = viewModel::verifyPin,
+                                            onUnlocked = viewModel::unlockSettings
+                                        )
+                                    } else {
+                                        SettingsScreen(
+                                            settings = settings,
+                                            simSlots = simSlots,
+                                            blockedCount = blockedNumbers.size,
+                                            isDefaultDialer = isDefaultDialer,
+                                            permissions = permissions,
+                                            onBack = { navController.popBackStack() },
+                                            onOpenThemesGallery = {
+                                                navController.navigate(ShajamalRoutes.THEMES)
+                                            },
+                                            onOpenBlockList = {
+                                                navController.navigate(ShajamalRoutes.BLOCK_LIST)
+                                            },
+                                            onOpenPrivacyDashboard = {
+                                                navController.navigate(ShajamalRoutes.PRIVACY_DASHBOARD)
+                                            },
+                                            onSelectTheme = viewModel::selectTheme,
+                                            onSelectDoodle = viewModel::selectDoodle,
+                                            onSelectLanguage = viewModel::setLanguage,
+                                            onPickSimRingtone = viewModel::setSimRingtone,
+                                            onResetSimRingtone = viewModel::clearSimRingtone,
+                                            onRequestDefaultDialer = ::requestDefaultDialer,
+                                            onRequestPermissions = {
+                                                permissionsLauncher.launch(requiredPermissions)
+                                            },
+                                            onRefreshSims = viewModel::refreshDeviceState,
+                                            onToggleDualSimMode = viewModel::setDualSimMode,
+                                            onToggleDtmfTones = viewModel::setDtmfTonesEnabled,
+                                            onToggleHapticFeedback = viewModel::setHapticFeedbackEnabled,
+                                            onToggleAutoCleanPaste = viewModel::setAutoCleanPastedNumber,
+                                            onDisplayScaleChange = viewModel::setDisplayScale,
+                                            onFontScaleChange = viewModel::setFontScale
+                                        )
+                                    }
+                                }
+
+                                composable(ShajamalRoutes.PRIVACY_DASHBOARD) {
+                                    if (isSettingsLockRequired) {
+                                        SecurityPinLockOverlay(
+                                            title = strings.pinProtectedSettingsTitle,
+                                            subtitle = strings.unlockSettingsPrompt,
+                                            allowDismiss = true,
+                                            onDismiss = { navController.popBackStack() },
+                                            onVerifyPin = viewModel::verifyPin,
+                                            onUnlocked = viewModel::unlockSettings
+                                        )
+                                    } else {
+                                        PrivacyDashboardScreen(
+                                            settings = settings,
+                                            isDefaultDialer = isDefaultDialer,
+                                            blockedCount = blockedNumbers.size,
+                                            spamReportCount = communityReports.size,
+                                            privateContactCount = privateContacts.size,
+                                            hiddenCallCount = hiddenCalls.size,
+                                            onBack = { navController.popBackStack() },
+                                            onOpenPrivateContacts = {
+                                                navController.navigate(ShajamalRoutes.PRIVATE_CONTACTS)
+                                            },
+                                            onOpenHiddenHistory = {
+                                                navController.navigate(ShajamalRoutes.HIDDEN_HISTORY)
+                                            },
+                                            onOpenSpamDatabase = {
+                                                navController.navigate(ShajamalRoutes.SPAM_DATABASE)
+                                            },
+                                            onToggleCallerId = viewModel::setCallerIdEnabled,
+                                            onToggleSpamDetection = viewModel::setSpamDetectionEnabled,
+                                            onToggleFraudWarning = viewModel::setFraudWarningEnabled,
+                                            onToggleAutoSpamCategory = viewModel::setAutoSpamCategoryEnabled,
+                                            onToggleAppLock = viewModel::setAppLockEnabled,
+                                            onTogglePinProtectedSettings = viewModel::setPinProtectedSettingsEnabled,
+                                            onToggleSensitiveProtection = viewModel::setSensitiveContactProtectionEnabled,
+                                            onSetSecurityPin = viewModel::setSecurityPin,
+                                            onRemoveSecurityPin = viewModel::removeSecurityPin,
+                                            onExportBackup = viewModel::exportEncryptedBackupToUri,
+                                            onRestoreBackup = viewModel::restoreEncryptedBackupFromUri,
+                                            onShowMessage = viewModel::emitMessage
+                                        )
+                                    }
+                                }
+
+                                composable(ShajamalRoutes.PRIVATE_CONTACTS) {
+                                    PrivateContactsScreen(
+                                        privateContacts = privateContacts,
                                         onBack = { navController.popBackStack() },
-                                        onOpenThemesGallery = {
-                                            navController.navigate(ShajamalRoutes.THEMES)
-                                        },
-                                        onOpenBlockList = {
-                                            navController.navigate(ShajamalRoutes.BLOCK_LIST)
-                                        },
-                                        onSelectTheme = viewModel::selectTheme,
-                                        onSelectDoodle = viewModel::selectDoodle,
-                                        onSelectLanguage = viewModel::setLanguage,
-                                        onPickSimRingtone = viewModel::setSimRingtone,
-                                        onResetSimRingtone = viewModel::clearSimRingtone,
-                                        onRequestDefaultDialer = ::requestDefaultDialer,
-                                        onRequestPermissions = {
-                                            permissionsLauncher.launch(requiredPermissions)
-                                        },
-                                        onRefreshSims = viewModel::refreshDeviceState,
-                                        onToggleDualSimMode = viewModel::setDualSimMode,
-                                        onToggleDtmfTones = viewModel::setDtmfTonesEnabled,
-                                        onToggleHapticFeedback = viewModel::setHapticFeedbackEnabled,
-                                        onToggleAutoCleanPaste = viewModel::setAutoCleanPastedNumber,
-                                        onDisplayScaleChange = viewModel::setDisplayScale,
-                                        onFontScaleChange = viewModel::setFontScale
+                                        onAddPrivateContact = viewModel::addOrUpdatePrivateContact,
+                                        onToggleSensitiveMask = viewModel::togglePrivateContactMask,
+                                        onDeletePrivateContact = viewModel::removePrivateContact,
+                                        onCallChooseSim = viewModel::openSimPickerForNumber
+                                    )
+                                }
+
+                                composable(ShajamalRoutes.HIDDEN_HISTORY) {
+                                    HiddenHistoryScreen(
+                                        hiddenCalls = hiddenCalls,
+                                        onBack = { navController.popBackStack() },
+                                        onCallChooseSim = viewModel::openSimPickerForNumber,
+                                        onDeleteHiddenCall = viewModel::deleteHiddenCall,
+                                        onClearAll = viewModel::clearHiddenHistory
+                                    )
+                                }
+
+                                composable(ShajamalRoutes.SPAM_DATABASE) {
+                                    SpamDatabaseScreen(
+                                        language = settings.language,
+                                        communityReports = communityReports.values.sortedByDescending { it.reportedAtMillis },
+                                        blockedNumbers = blockedNumbers,
+                                        onBack = { navController.popBackStack() },
+                                        onSubmitReport = viewModel::reportSpamNumber,
+                                        onRemoveReport = viewModel::removeSpamReport,
+                                        onUnblockNumber = viewModel::unblockNumber
                                     )
                                 }
 
@@ -546,11 +664,16 @@ private fun ShajamalApp(
                                         val blocked = key.isNotBlank() && blockedNumbers.any {
                                             PhoneNumberInfoHelper.canonicalKey(it.number) == key
                                         }
+                                        val privateMatch = privateContacts.firstOrNull {
+                                            val pk = PhoneNumberInfoHelper.canonicalKey(it.number)
+                                            (key.isNotBlank() && pk == key) || it.number == target.number
+                                        }
                                         ContactProfileScreen(
                                             target = target,
                                             savedNote = savedNote,
                                             selectedGroup = group,
                                             isBlocked = blocked,
+                                            isPrivateContact = privateMatch != null,
                                             language = settings.language,
                                             onBack = { navController.popBackStack() },
                                             onToggleStar = {
@@ -574,6 +697,21 @@ private fun ShajamalApp(
                                                     viewModel.blockNumber(target.number, target.displayTitle)
                                                 }
                                             },
+                                            onTogglePrivateContact = { makePrivate ->
+                                                if (makePrivate) {
+                                                    viewModel.addOrUpdatePrivateContact(
+                                                        name = target.displayTitle,
+                                                        number = target.number,
+                                                        note = savedNote.orEmpty(),
+                                                        sensitiveMask = true
+                                                    )
+                                                } else if (privateMatch != null) {
+                                                    viewModel.removePrivateContact(privateMatch.id)
+                                                }
+                                            },
+                                            onSubmitSpamReport = { category, note, alsoBlock ->
+                                                viewModel.reportSpamNumber(target.number, category, note, alsoBlock)
+                                            },
                                             onShowMessage = viewModel::emitMessage
                                         )
                                     }
@@ -582,6 +720,16 @@ private fun ShajamalApp(
                         }
                     }
                 }
+            }
+
+            if (isAppLocked) {
+                SecurityPinLockOverlay(
+                    title = strings.unlockAppPrompt,
+                    subtitle = strings.appLockSub,
+                    allowDismiss = false,
+                    onVerifyPin = viewModel::verifyPin,
+                    onUnlocked = viewModel::unlockApp
+                )
             }
 
             simPickerNumber?.let { number ->

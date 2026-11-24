@@ -35,10 +35,13 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Group
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.ReportProblem
 import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -73,7 +76,9 @@ import coil.compose.AsyncImage
 import com.example.data.model.AppLanguage
 import com.example.data.model.CallerProfileTarget
 import com.example.data.model.FavoriteGroup
+import com.example.data.model.SpamCategory
 import com.example.data.telephony.PhoneNumberInfoHelper
+import com.example.ui.theme.CallIncomingGreen
 import com.example.ui.theme.CallMissedRed
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalAppStrings
@@ -86,6 +91,7 @@ fun ContactProfileScreen(
     savedNote: String?,
     selectedGroup: FavoriteGroup,
     isBlocked: Boolean,
+    isPrivateContact: Boolean = false,
     language: AppLanguage,
     onBack: () -> Unit,
     onToggleStar: () -> Unit,
@@ -94,10 +100,13 @@ fun ContactProfileScreen(
     onSelectGroup: (FavoriteGroup) -> Unit,
     onSaveNote: (String) -> Unit,
     onToggleBlock: () -> Unit,
+    onTogglePrivateContact: (Boolean) -> Unit = {},
+    onSubmitSpamReport: (SpamCategory, String, Boolean) -> Unit = { _, _, _ -> },
     onShowMessage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
+    var showReportDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val strings = LocalAppStrings.current
@@ -559,6 +568,63 @@ fun ContactProfileScreen(
             }
         }
 
+        // Private Vault Toggle & Community Report Actions
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedButton(
+                onClick = { onTogglePrivateContact(!isPrivateContact) },
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(
+                    1.dp,
+                    if (isPrivateContact) Color(0xFF6366F1) else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("profile_private_toggle_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Lock,
+                    contentDescription = null,
+                    tint = if (isPrivateContact) Color(0xFF6366F1) else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = strings.privateContactsTitle,
+                    color = if (isPrivateContact) Color(0xFF6366F1) else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            OutlinedButton(
+                onClick = { showReportDialog = true },
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, Color(0xFFD97706).copy(alpha = 0.55f)),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("profile_report_spam_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ReportProblem,
+                    contentDescription = null,
+                    tint = Color(0xFFD97706),
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = strings.reportNumberTitle,
+                    color = Color(0xFFB45309),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
         // Bottom Block / Unblock action
         OutlinedButton(
             onClick = onToggleBlock,
@@ -584,6 +650,85 @@ fun ContactProfileScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+    }
+
+    if (showReportDialog) {
+        val isBn = language == AppLanguage.BENGALI
+        var selectedCategory by remember { mutableStateOf(SpamCategory.TELEMARKETING) }
+        var reportNote by remember { mutableStateOf("") }
+        val selectable = remember {
+            listOf(
+                SpamCategory.SCAM_FRAUD,
+                SpamCategory.TELEMARKETING,
+                SpamCategory.LOAN_DEBT,
+                SpamCategory.ROBOCALL,
+                SpamCategory.HARASSMENT,
+                SpamCategory.VERIFIED_BUSINESS
+            )
+        }
+        AlertDialog(
+            onDismissRequest = { showReportDialog = false },
+            title = { Text(strings.reportNumberTitle) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = formattedNumber,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        color = CallIncomingGreen
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        selectable.forEach { cat ->
+                            val selected = cat == selectedCategory
+                            val label = if (isBn) cat.labelBn else cat.labelEn
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable { selectedCategory = cat }
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                )
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = reportNote,
+                        onValueChange = { reportNote = it },
+                        label = { Text(strings.notePlaceholder) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onSubmitSpamReport(
+                            selectedCategory,
+                            reportNote,
+                            selectedCategory == SpamCategory.SCAM_FRAUD || selectedCategory == SpamCategory.HARASSMENT
+                        )
+                        showReportDialog = false
+                    }
+                ) {
+                    Text(strings.save)
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showReportDialog = false }) {
+                    Text(strings.cancel)
+                }
+            }
+        )
     }
 }
 

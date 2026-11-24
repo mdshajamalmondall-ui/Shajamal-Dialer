@@ -15,9 +15,14 @@ import android.telecom.CallAudioState
 import android.telecom.InCallService
 import androidx.core.app.NotificationCompat
 import com.example.R
+import com.example.data.model.AppLanguage
+import com.example.data.model.CallDirection
+import com.example.data.preferences.PrivacyVaultDataStore
 import com.example.data.preferences.SettingsDataStore
+import com.example.data.telephony.CallerIntelligenceEngine
 import com.example.data.telephony.DeviceDirectoryRepository
 import com.example.data.telephony.DualSimCallManager
+import com.example.data.telephony.PhoneNumberInfoHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,13 +38,24 @@ class ShajamalInCallService : InCallService() {
     private var customMediaPlayer: MediaPlayer? = null
     private var activeRingtone: Ringtone? = null
 
+    private var currentCallIncoming: Boolean = false
+    private var currentCallConnectedAtMillis: Long = 0L
+    private var currentCallSimSlot: Int? = null
+    private var loggedHiddenCallForCurrent: Boolean = false
+    @Volatile
+    private var maskedNotificationTitle: String? = null
+
     private val callCallback = object : Call.Callback() {
         override fun onStateChanged(call: Call, state: Int) {
             if (state != Call.STATE_RINGING) {
                 stopCustomRingtone()
             }
+            if (state == Call.STATE_ACTIVE && currentCallConnectedAtMillis == 0L) {
+                currentCallConnectedAtMillis = System.currentTimeMillis()
+            }
             CallRepository.refreshState(state)
             if (state == Call.STATE_DISCONNECTED) {
+                maybeRecordHiddenCall(call)
                 cancelCallNotification()
             } else {
                 postCallNotification(call, state)
@@ -114,6 +130,12 @@ class ShajamalInCallService : InCallService() {
         activeCall = call
         call.registerCallback(callCallback)
 
+        currentCallIncoming = (initialState == Call.STATE_RINGING)
+        currentCallConnectedAtMillis = if (initialState == Call.STATE_ACTIVE) System.currentTimeMillis() else 0L
+        currentCallSimSlot = resolveSimSlotIndex(call)
+        loggedHiddenCallForCurrent = false
+        maskedNotificationTitle = null
+
         val simLabel = resolveSimLabel(call)
         CallRepository.setCall(call, simLabel, initialState)
         resolveCallerAsync(call)
@@ -135,6 +157,67 @@ class ShajamalInCallService : InCallService() {
             )
             val (name, photoUri) = directory.resolveCallerIdentity(number)
             CallRepository.updateResolvedCallerIdentity(number, name, photoUri)
+
+            val settings = runCatching { SettingsDataStore(applicationContext).settingsFlow.first() }.getOrNull()
+            val privates = runCatching { PrivacyVaultDataStore(applicationContext).privateContactsFlow.first() }.getOrDefault(emptyList())
+            val canonical = PhoneNumberInfoHelper.canonicalKey(number)
+            val privateEntry = privates.firstOrNull {
+                val pk = PhoneNumberInfoHelper.canonicalKey(it.number)
+                (canonical.isNotBlank() && pk == canonical) || it.number == number
+            }
+            if (privateEntry != null && (privateEntry.sensitiveMask || settings?.sensitiveContactProtectionEnabled == true)) {
+                val masked = CallerIntelligenceEngine.maskPhoneNumber(
+                    PhoneNumberInfoHelper.formatDisplayNumber(number).ifBlank { number }
+                )
+                val label = if (settings?.language == AppLanguage.BENGALI) {
+                    "গোপন কন্টাক্ট ($masked)"
+                } else {
+                    "Protected Contact ($masked)"
+                }
+                maskedNotificationTitle = label
+                postCallNotification(call)
+            }
+        }
+    }
+
+    private fun maybeRecordHiddenCall(call: Call) {
+        if (loggedHiddenCallForCurrent) return
+        val number = call.details?.handle?.schemeSpecificPart.orEmpty()
+        if (number.isBlank()) return
+        loggedHiddenCallForCurrent = true
+
+        val wasIncoming = currentCallIncoming
+        val connectedAt = currentCallConnectedAtMillis
+        val simSlot = currentCallSimSlot
+        val direction = when {
+            wasIncoming && connectedAt > 0L -> CallDirection.INCOMING
+            wasIncoming -> CallDirection.MISSED
+            else -> CallDirection.OUTGOING
+        }
+        val durationSeconds = if (connectedAt > 0L) {
+            ((System.currentTimeMillis() - connectedAt) / 1000L).coerceAtLeast(0L)
+        } else {
+            0L
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            val vault = PrivacyVaultDataStore(applicationContext)
+            val privates = runCatching { vault.privateContactsFlow.first() }.getOrDefault(emptyList())
+            val canonical = PhoneNumberInfoHelper.canonicalKey(number)
+            val matchedPrivate = privates.firstOrNull {
+                val pk = PhoneNumberInfoHelper.canonicalKey(it.number)
+                (canonical.isNotBlank() && pk == canonical) || it.number == number
+            }
+            if (matchedPrivate != null) {
+                vault.recordHiddenCall(
+                    rawNumber = number,
+                    contactName = matchedPrivate.name,
+                    direction = direction,
+                    timestampMillis = System.currentTimeMillis(),
+                    durationSeconds = durationSeconds,
+                    simSlotIndex = simSlot
+                )
+            }
         }
     }
 
@@ -142,6 +225,7 @@ class ShajamalInCallService : InCallService() {
         super.onCallRemoved(call)
         call.unregisterCallback(callCallback)
         if (activeCall === call) {
+            maybeRecordHiddenCall(call)
             stopCustomRingtone()
             activeCall = null
             CallRepository.setCall(null, null)
@@ -260,7 +344,8 @@ class ShajamalInCallService : InCallService() {
             isRinging -> CHANNEL_INCOMING
             else -> CHANNEL_ONGOING
         }
-        val caller = call.details?.callerDisplayName?.takeIf { it.isNotBlank() }
+        val caller = maskedNotificationTitle
+            ?: call.details?.callerDisplayName?.takeIf { it.isNotBlank() }
             ?: call.details?.handle?.schemeSpecificPart
             ?: "Call"
 

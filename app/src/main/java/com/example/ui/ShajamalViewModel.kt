@@ -19,18 +19,24 @@ import com.example.data.model.CallDirection
 import com.example.data.model.CallLogItem
 import com.example.data.model.CallPlacementResult
 import com.example.data.model.CallerProfileTarget
+import com.example.data.model.CommunitySpamReport
 import com.example.data.model.ContactItem
 import com.example.data.model.DialerSettings
 import com.example.data.model.DoodleDesign
 import com.example.data.model.DualSimMode
 import com.example.data.model.FavoriteGroup
 import com.example.data.model.GroupedCallLogItem
+import com.example.data.model.HiddenCallEntry
 import com.example.data.model.PermissionSnapshot
+import com.example.data.model.PrivateContactEntry
 import com.example.data.model.SimSlotInfo
+import com.example.data.model.SpamCategory
+import com.example.data.preferences.PrivacyVaultDataStore
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.telephony.DeviceDirectoryRepository
 import com.example.data.telephony.DualSimCallManager
 import com.example.data.telephony.PhoneNumberInfoHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -42,6 +48,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 
 enum class CallLogFilter {
@@ -57,6 +64,7 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
 
     private val context = application.applicationContext
     private val settingsDataStore = SettingsDataStore(context)
+    private val privacyVaultDataStore = PrivacyVaultDataStore(context)
     private val dualSimCallManager = DualSimCallManager(context)
     private val directoryRepository = DeviceDirectoryRepository(context, dualSimCallManager)
 
@@ -71,6 +79,43 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    val communityReports: StateFlow<Map<String, CommunitySpamReport>> =
+        settingsDataStore.communityReportsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
+        )
+
+    val privateContacts: StateFlow<List<PrivateContactEntry>> =
+        privacyVaultDataStore.privateContactsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val hiddenCalls: StateFlow<List<HiddenCallEntry>> =
+        privacyVaultDataStore.hiddenCallsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    private val _appUnlockedThisSession = MutableStateFlow(false)
+    val isAppLocked: StateFlow<Boolean> = combine(
+        settings,
+        _appUnlockedThisSession
+    ) { currentSettings, unlocked ->
+        currentSettings.appLockEnabled && currentSettings.hasSecurityPin && !unlocked
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    private val _settingsUnlocked = MutableStateFlow(false)
+    val isSettingsLockRequired: StateFlow<Boolean> = combine(
+        settings,
+        _settingsUnlocked
+    ) { currentSettings, unlocked ->
+        currentSettings.pinProtectedSettingsEnabled && currentSettings.hasSecurityPin && !unlocked
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     val numberNotes: StateFlow<Map<String, String>> = settingsDataStore.numberNotesFlow.stateIn(
         scope = viewModelScope,
@@ -160,13 +205,24 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
 
     val filteredContacts: StateFlow<List<ContactItem>> = combine(
         _allContacts,
+        privateContacts,
         _contactSearchQuery
-    ) { contacts, query ->
-        val trimmed = query.trim()
-        if (trimmed.isEmpty()) {
+    ) { contacts, privates, query ->
+        val privateKeys = privates.mapNotNull {
+            PhoneNumberInfoHelper.canonicalKey(it.number).takeIf { k -> k.isNotBlank() }
+        }.toSet()
+        val publicContacts = if (privateKeys.isEmpty()) {
             contacts
         } else {
             contacts.filter { contact ->
+                contact.phoneNumbers.none { PhoneNumberInfoHelper.canonicalKey(it) in privateKeys }
+            }
+        }
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            publicContacts
+        } else {
+            publicContacts.filter { contact ->
                 contact.name.contains(trimmed, ignoreCase = true) ||
                     contact.phoneNumbers.any { it.contains(trimmed, ignoreCase = true) }
             }
@@ -567,6 +623,170 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
                 emitMessage(if (!currentlyStarred) "Added to Favorites" else "Removed from Favorites")
             } else {
                 emitMessage("Grant Contacts write permission to update favorite.")
+            }
+        }
+    }
+
+    fun setCallerIdEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setCallerIdEnabled(enabled) }
+    }
+
+    fun setSpamDetectionEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setSpamDetectionEnabled(enabled) }
+    }
+
+    fun setFraudWarningEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setFraudWarningEnabled(enabled) }
+    }
+
+    fun setAutoSpamCategoryEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setAutoSpamCategoryEnabled(enabled) }
+    }
+
+    fun setAppLockEnabled(enabled: Boolean) {
+        if (enabled) _appUnlockedThisSession.value = true
+        viewModelScope.launch { settingsDataStore.setAppLockEnabled(enabled) }
+    }
+
+    fun setPinProtectedSettingsEnabled(enabled: Boolean) {
+        if (enabled) _settingsUnlocked.value = true
+        viewModelScope.launch { settingsDataStore.setPinProtectedSettingsEnabled(enabled) }
+    }
+
+    fun setSensitiveContactProtectionEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setSensitiveContactProtectionEnabled(enabled) }
+    }
+
+    fun setSecurityPin(pin: String) {
+        viewModelScope.launch {
+            settingsDataStore.setSecurityPin(pin)
+            _appUnlockedThisSession.value = true
+            _settingsUnlocked.value = true
+            emitMessage("Security PIN saved")
+        }
+    }
+
+    fun removeSecurityPin() {
+        viewModelScope.launch {
+            settingsDataStore.clearSecurityPin()
+            _appUnlockedThisSession.value = true
+            _settingsUnlocked.value = true
+            emitMessage("Security PIN removed")
+        }
+    }
+
+    suspend fun verifyPin(pin: String): Boolean = settingsDataStore.verifySecurityPin(pin)
+
+    fun unlockApp() {
+        _appUnlockedThisSession.value = true
+    }
+
+    fun unlockSettings() {
+        _settingsUnlocked.value = true
+    }
+
+    fun lockSettingsSession() {
+        _settingsUnlocked.value = false
+    }
+
+    fun reportSpamNumber(
+        number: String,
+        category: SpamCategory,
+        note: String = "",
+        alsoBlock: Boolean = false
+    ) {
+        val cleaned = DualSimCallManager.sanitizeDialNumber(number).ifBlank { number.trim() }
+        if (cleaned.isBlank()) return
+        viewModelScope.launch {
+            settingsDataStore.reportSpamNumber(cleaned, category, note)
+            if (alsoBlock) {
+                settingsDataStore.blockNumber(cleaned, category.labelEn)
+            }
+            emitMessage("Reported $cleaned (${category.labelEn})")
+        }
+    }
+
+    fun removeSpamReport(canonicalKey: String) {
+        viewModelScope.launch {
+            settingsDataStore.removeSpamReport(canonicalKey)
+            emitMessage("Report removed")
+        }
+    }
+
+    fun addOrUpdatePrivateContact(
+        name: String,
+        number: String,
+        note: String = "",
+        sensitiveMask: Boolean = true
+    ) {
+        val cleaned = DualSimCallManager.sanitizeDialNumber(number).ifBlank { number.trim() }
+        if (cleaned.isBlank()) return
+        viewModelScope.launch {
+            privacyVaultDataStore.addOrUpdatePrivateContact(name, cleaned, note, sensitiveMask)
+            emitMessage("Added to Private Contacts")
+        }
+    }
+
+    fun togglePrivateContactMask(id: String, masked: Boolean) {
+        viewModelScope.launch { privacyVaultDataStore.togglePrivateContactMask(id, masked) }
+    }
+
+    fun removePrivateContact(id: String) {
+        viewModelScope.launch {
+            privacyVaultDataStore.removePrivateContact(id)
+            emitMessage("Removed from Private Contacts")
+        }
+    }
+
+    fun deleteHiddenCall(id: String) {
+        viewModelScope.launch { privacyVaultDataStore.deleteHiddenCall(id) }
+    }
+
+    fun clearHiddenHistory() {
+        viewModelScope.launch {
+            privacyVaultDataStore.clearHiddenHistory()
+            emitMessage("Hidden call history cleared")
+        }
+    }
+
+    fun exportEncryptedBackupToUri(uri: Uri, passphrase: String) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val payload = privacyVaultDataStore.exportEncryptedBackup(
+                    passphrase = passphrase,
+                    blockedNumbers = blockedNumbers.value,
+                    numberNotes = numberNotes.value,
+                    communityReports = communityReports.value.values
+                )
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(payload.toByteArray(Charsets.UTF_8))
+                    } ?: error("Unable to open backup file for writing")
+                }
+            }
+            if (result.isSuccess) {
+                emitMessage("Encrypted backup exported securely")
+            } else {
+                emitMessage("Backup export failed: ${result.exceptionOrNull()?.message ?: "error"}")
+            }
+        }
+    }
+
+    fun restoreEncryptedBackupFromUri(uri: Uri, passphrase: String) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val content = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        input.bufferedReader(Charsets.UTF_8).readText()
+                    } ?: error("Unable to read backup file")
+                }
+                privacyVaultDataStore.restoreEncryptedBackup(content, passphrase, settingsDataStore)
+                    .getOrThrow()
+            }
+            result.onSuccess { count ->
+                emitMessage("Restored $count item(s) from encrypted backup")
+            }.onFailure {
+                emitMessage("Restore failed: incorrect passphrase or invalid file")
             }
         }
     }

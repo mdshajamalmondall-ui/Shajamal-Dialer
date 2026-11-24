@@ -43,6 +43,7 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Button
@@ -98,6 +99,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenThemesGallery: () -> Unit,
     onOpenBlockList: () -> Unit,
+    onOpenPrivacyDashboard: () -> Unit,
     onSelectTheme: (String) -> Unit,
     onSelectDoodle: (DoodleDesign) -> Unit,
     onSelectLanguage: (AppLanguage) -> Unit,
@@ -283,6 +285,60 @@ fun SettingsScreen(
                 onDisplayScaleChange = onDisplayScaleChange,
                 onFontScaleChange = onFontScaleChange
             )
+        }
+
+        // Privacy & Caller Security Dashboard Card
+        item {
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
+                border = BorderStroke(1.dp, Color(0xFF16A34A).copy(alpha = 0.42f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(22.dp))
+                    .clickable(onClick = onOpenPrivacyDashboard)
+                    .testTag("open_privacy_dashboard_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF16A34A).copy(alpha = 0.16f),
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.Shield,
+                                contentDescription = null,
+                                tint = Color(0xFF15803D)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.privacyDashboardTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = strings.privacyDashboardSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = strings.privacyDashboardTitle,
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
         }
 
         // Themes & Pictures Preview Strip Card

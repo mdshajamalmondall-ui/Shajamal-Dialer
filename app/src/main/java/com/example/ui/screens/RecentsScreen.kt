@@ -90,12 +90,23 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.rounded.ReportProblem
+import androidx.compose.material.icons.rounded.Shield
 import com.example.data.model.BlockedNumberEntry
 import com.example.data.model.CallAnalyticsSummary
 import com.example.data.model.CallDirection
 import com.example.data.model.CallLogItem
+import com.example.data.model.CallerIdentityReport
+import com.example.data.model.CallerTrustStatus
+import com.example.data.model.CommunitySpamReport
+import com.example.data.model.DialerSettings
 import com.example.data.model.GroupedCallLogItem
 import com.example.data.model.PermissionSnapshot
+import com.example.data.model.PrivateContactEntry
+import com.example.data.model.SpamCategory
+import com.example.data.telephony.CallerIntelligenceEngine
 import com.example.data.telephony.PhoneNumberInfoHelper
 import com.example.ui.CallLogFilter
 import com.example.ui.theme.CallIncomingGreen
@@ -108,7 +119,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun RecentsScreen(
     groupedLogs: List<GroupedCallLogItem>,
@@ -119,6 +130,9 @@ fun RecentsScreen(
     blockedNumbers: List<BlockedNumberEntry>,
     numberNotes: Map<String, String>,
     permissions: PermissionSnapshot,
+    settings: DialerSettings = DialerSettings(),
+    communityReports: Map<String, CommunitySpamReport> = emptyMap(),
+    privateContacts: List<PrivateContactEntry> = emptyList(),
     onSelectFilter: (CallLogFilter) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onCallChooseSim: (String) -> Unit,
@@ -126,10 +140,12 @@ fun RecentsScreen(
     onEditInDialer: (String) -> Unit,
     onSaveNote: (String, String) -> Unit,
     onToggleBlock: (String, Boolean) -> Unit,
+    onSubmitSpamReport: (String, SpamCategory, String, Boolean) -> Unit = { _, _, _, _ -> },
     onDeleteEntry: (Long) -> Unit,
     onDeleteMultiple: (Set<Long>) -> Unit,
     onOpenFullProfile: (GroupedCallLogItem) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenPrivacyDashboard: () -> Unit = {},
     onRequestPermissions: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -141,6 +157,7 @@ fun RecentsScreen(
 
     var activeHistoryGroupKey by remember { mutableStateOf<String?>(null) }
     var noteDialogNumber by remember { mutableStateOf<String?>(null) }
+    var reportDialogNumber by remember { mutableStateOf<String?>(null) }
 
     val activeHistoryGroup = remember(activeHistoryGroupKey, groupedLogs) {
         groupedLogs.firstOrNull { it.groupKey == activeHistoryGroupKey }
@@ -357,10 +374,16 @@ fun RecentsScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onOpenPrivacyDashboard)
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
                 Icon(
                     imageVector = Icons.Rounded.Security,
-                    contentDescription = null,
+                    contentDescription = strings.privacyDashboardTitle,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(14.dp)
                 )
@@ -405,10 +428,36 @@ fun RecentsScreen(
                     val canonical = PhoneNumberInfoHelper.canonicalKey(group.number)
                     val savedNote = if (canonical.isNotBlank()) numberNotes[canonical] else null
                     val blocked = isNumberBlocked(group.number)
+                    val contactHint = group.displayTitle.takeIf {
+                        it != PhoneNumberInfoHelper.formatDisplayNumber(group.number) && it != group.number
+                    }
+                    val callerReport = remember(
+                        group.number,
+                        contactHint,
+                        group.photoUri,
+                        savedNote,
+                        blockedNumbers,
+                        communityReports,
+                        privateContacts,
+                        settings
+                    ) {
+                        CallerIntelligenceEngine.evaluate(
+                            rawNumber = group.number,
+                            contactName = contactHint,
+                            photoUri = group.photoUri,
+                            note = savedNote,
+                            blockedNumbers = blockedNumbers,
+                            communityReports = communityReports,
+                            privateContacts = privateContacts,
+                            settings = settings
+                        )
+                    }
 
                     if (isEditMode) {
                         GroupedRecentCardContent(
                             group = group,
+                            callerReport = callerReport,
+                            showCallerIdBadge = settings.callerIdEnabled,
                             savedNote = savedNote,
                             isBlocked = blocked,
                             editMode = true,
@@ -424,6 +473,7 @@ fun RecentsScreen(
                             onOpenProfile = { onOpenFullProfile(group) },
                             onOpenHistory = { activeHistoryGroupKey = group.groupKey },
                             onTagCallerId = { noteDialogNumber = group.number },
+                            onReportSpam = { reportDialogNumber = group.number },
                             onEditInKeypad = { onEditInDialer(group.number) },
                             onToggleBlock = { onToggleBlock(group.number, blocked) },
                             onDeleteGroup = { onDeleteMultiple(group.allIds) }
@@ -487,6 +537,8 @@ fun RecentsScreen(
                         ) {
                             GroupedRecentCardContent(
                                 group = group,
+                                callerReport = callerReport,
+                                showCallerIdBadge = settings.callerIdEnabled,
                                 savedNote = savedNote,
                                 isBlocked = blocked,
                                 editMode = false,
@@ -496,6 +548,7 @@ fun RecentsScreen(
                                 onOpenProfile = { onOpenFullProfile(group) },
                                 onOpenHistory = { activeHistoryGroupKey = group.groupKey },
                                 onTagCallerId = { noteDialogNumber = group.number },
+                                onReportSpam = { reportDialogNumber = group.number },
                                 onEditInKeypad = { onEditInDialer(group.number) },
                                 onToggleBlock = { onToggleBlock(group.number, blocked) },
                                 onDeleteGroup = { onDeleteMultiple(group.allIds) }
@@ -512,13 +565,27 @@ fun RecentsScreen(
         val blocked = isNumberBlocked(group.number)
         val canonical = PhoneNumberInfoHelper.canonicalKey(group.number)
         val note = if (canonical.isNotBlank()) numberNotes[canonical] else null
+        val contactHint = group.displayTitle.takeIf {
+            it != PhoneNumberInfoHelper.formatDisplayNumber(group.number) && it != group.number
+        }
+        val report = CallerIntelligenceEngine.evaluate(
+            rawNumber = group.number,
+            contactName = contactHint,
+            photoUri = group.photoUri,
+            note = note,
+            blockedNumbers = blockedNumbers,
+            communityReports = communityReports,
+            privateContacts = privateContacts,
+            settings = settings
+        )
         ModalBottomSheet(
             onDismissRequest = { activeHistoryGroupKey = null },
             containerColor = MaterialTheme.colorScheme.surface
         ) {
             GroupedHistoryDetailSheet(
                 group = group,
-                savedNote = note,
+                callerReport = report,
+                savedNote = if (report.isSensitiveMasked) null else note,
                 isBlocked = blocked,
                 onCallNow = {
                     activeHistoryGroupKey = null
@@ -574,6 +641,87 @@ fun RecentsScreen(
         )
     }
 
+    // Community Spam / Business Report Dialog
+    reportDialogNumber?.let { targetNumber ->
+        val isBn = settings.language == com.example.data.model.AppLanguage.BENGALI
+        var selectedCategory by remember { mutableStateOf(SpamCategory.TELEMARKETING) }
+        var noteInput by remember { mutableStateOf("") }
+        val selectable = remember {
+            listOf(
+                SpamCategory.SCAM_FRAUD,
+                SpamCategory.TELEMARKETING,
+                SpamCategory.LOAN_DEBT,
+                SpamCategory.ROBOCALL,
+                SpamCategory.HARASSMENT,
+                SpamCategory.VERIFIED_BUSINESS
+            )
+        }
+        AlertDialog(
+            onDismissRequest = { reportDialogNumber = null },
+            title = { Text(strings.reportNumberTitle) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = PhoneNumberInfoHelper.formatDisplayNumber(targetNumber),
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        color = CallIncomingGreen
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        selectable.forEach { cat ->
+                            val selected = cat == selectedCategory
+                            val label = if (isBn) cat.labelBn else cat.labelEn
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable { selectedCategory = cat }
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                )
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = noteInput,
+                        onValueChange = { noteInput = it },
+                        placeholder = { Text(strings.notePlaceholder) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onSubmitSpamReport(
+                            targetNumber,
+                            selectedCategory,
+                            noteInput,
+                            selectedCategory == SpamCategory.SCAM_FRAUD || selectedCategory == SpamCategory.HARASSMENT
+                        )
+                        reportDialogNumber = null
+                    }
+                ) {
+                    Text(strings.save)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { reportDialogNumber = null }) {
+                    Text(strings.cancel)
+                }
+            }
+        )
+    }
+
     // Call Analysis Sheet
     if (showAnalysisSheet) {
         ModalBottomSheet(
@@ -588,6 +736,8 @@ fun RecentsScreen(
 @Composable
 private fun GroupedRecentCardContent(
     group: GroupedCallLogItem,
+    callerReport: CallerIdentityReport,
+    showCallerIdBadge: Boolean,
     savedNote: String?,
     isBlocked: Boolean,
     editMode: Boolean,
@@ -597,12 +747,22 @@ private fun GroupedRecentCardContent(
     onOpenProfile: () -> Unit,
     onOpenHistory: () -> Unit,
     onTagCallerId: () -> Unit,
+    onReportSpam: () -> Unit,
     onEditInKeypad: () -> Unit,
     onToggleBlock: () -> Unit,
     onDeleteGroup: () -> Unit
 ) {
     val strings = LocalAppStrings.current
     var menuExpanded by remember { mutableStateOf(false) }
+
+    val displayTitle = if (callerReport.isSensitiveMasked) {
+        callerReport.displayName
+    } else if (callerReport.isBusinessVerified && group.contactId == null) {
+        callerReport.displayName
+    } else {
+        group.displayTitle
+    }
+    val displayPhoto = if (callerReport.isSensitiveMasked) null else group.photoUri
 
     val (dirIcon, dirColor) = when (group.latestDirection) {
         CallDirection.INCOMING -> Icons.AutoMirrored.Rounded.CallReceived to CallIncomingGreen
@@ -621,13 +781,17 @@ private fun GroupedRecentCardContent(
         ).toString()
     }
 
+    val cardBorderColor = when {
+        isBlocked || callerReport.status == CallerTrustStatus.FRAUD_WARNING -> CallMissedRed.copy(alpha = 0.55f)
+        callerReport.status == CallerTrustStatus.SPAM_SUSPECTED -> Color(0xFFD97706).copy(alpha = 0.55f)
+        callerReport.status == CallerTrustStatus.SENSITIVE_PROTECTED -> Color(0xFF6366F1).copy(alpha = 0.45f)
+        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+    }
+
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-        border = BorderStroke(
-            width = 1.dp,
-            color = if (isBlocked) CallMissedRed.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-        ),
+        border = BorderStroke(width = 1.dp, color = cardBorderColor),
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
@@ -646,8 +810,8 @@ private fun GroupedRecentCardContent(
                 )
             } else {
                 CallerAvatar(
-                    title = group.displayTitle,
-                    photoUri = group.photoUri,
+                    title = displayTitle,
+                    photoUri = displayPhoto,
                     size = 44.dp
                 )
             }
@@ -660,11 +824,15 @@ private fun GroupedRecentCardContent(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = group.displayTitle,
+                        text = displayTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = when {
-                            isBlocked || group.latestDirection == CallDirection.MISSED -> CallMissedRed
+                            isBlocked ||
+                                callerReport.status == CallerTrustStatus.FRAUD_WARNING ||
+                                group.latestDirection == CallDirection.MISSED -> CallMissedRed
+                            callerReport.status == CallerTrustStatus.VERIFIED_BUSINESS -> Color(0xFF15803D)
+                            callerReport.status == CallerTrustStatus.SENSITIVE_PROTECTED -> Color(0xFF4F46E5)
                             else -> MaterialTheme.colorScheme.onSurface
                         },
                         maxLines = 1,
@@ -742,7 +910,45 @@ private fun GroupedRecentCardContent(
                     }
                 }
 
-                if (!savedNote.isNullOrBlank()) {
+                val showSpecialStatusBadge = callerReport.status in setOf(
+                    CallerTrustStatus.FRAUD_WARNING,
+                    CallerTrustStatus.SPAM_SUSPECTED,
+                    CallerTrustStatus.VERIFIED_BUSINESS,
+                    CallerTrustStatus.SENSITIVE_PROTECTED,
+                    CallerTrustStatus.BLOCKED
+                ) || (showCallerIdBadge && callerReport.status == CallerTrustStatus.UNKNOWN_CLEAN)
+
+                if (showSpecialStatusBadge) {
+                    val chipColor = when (callerReport.status) {
+                        CallerTrustStatus.FRAUD_WARNING, CallerTrustStatus.BLOCKED -> CallMissedRed
+                        CallerTrustStatus.SPAM_SUSPECTED -> Color(0xFFD97706)
+                        CallerTrustStatus.VERIFIED_BUSINESS -> Color(0xFF15803D)
+                        CallerTrustStatus.SENSITIVE_PROTECTED -> Color(0xFF4F46E5)
+                        else -> Color(0xFF0284C7)
+                    }
+                    val badgeLabel = if (callerReport.status == CallerTrustStatus.UNKNOWN_CLEAN) {
+                        "${callerReport.statusBadge} • ${callerReport.carrierRegion.substringBefore(" ·")}"
+                    } else {
+                        callerReport.statusBadge
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = chipColor.copy(alpha = 0.12f),
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text(
+                            text = badgeLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = chipColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                if (!savedNote.isNullOrBlank() && !callerReport.isSensitiveMasked) {
                     Text(
                         text = savedNote,
                         style = MaterialTheme.typography.labelSmall,
@@ -834,6 +1040,16 @@ private fun GroupedRecentCardContent(
                                 onEditInKeypad()
                             }
                         )
+                        DropdownMenuItem(
+                            text = { Text(strings.reportNumberTitle) },
+                            leadingIcon = {
+                                Icon(Icons.Rounded.ReportProblem, contentDescription = null, tint = Color(0xFFD97706))
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onReportSpam()
+                            }
+                        )
                         HorizontalDivider()
                         DropdownMenuItem(
                             text = {
@@ -870,6 +1086,7 @@ private fun GroupedRecentCardContent(
 @Composable
 private fun GroupedHistoryDetailSheet(
     group: GroupedCallLogItem,
+    callerReport: CallerIdentityReport,
     savedNote: String?,
     isBlocked: Boolean,
     onCallNow: () -> Unit,
@@ -879,12 +1096,16 @@ private fun GroupedHistoryDetailSheet(
     onDeleteEntry: (Long) -> Unit
 ) {
     val strings = LocalAppStrings.current
-    val formattedNumber = remember(group.number) {
-        PhoneNumberInfoHelper.formatDisplayNumber(group.number)
+    val formattedNumber = callerReport.formattedNumber
+    val carrier = callerReport.carrierRegion.substringBefore(" ·")
+    val sheetTitle = if (callerReport.isSensitiveMasked) {
+        callerReport.displayName
+    } else if (callerReport.isBusinessVerified && group.contactId == null) {
+        callerReport.displayName
+    } else {
+        group.displayTitle
     }
-    val carrier = remember(group.number) {
-        PhoneNumberInfoHelper.detectCarrierAndRegion(group.number).substringBefore(" ·")
-    }
+    val sheetPhoto = if (callerReport.isSensitiveMasked) null else group.photoUri
     val dateFormat = remember { SimpleDateFormat("EEE, MMM d • HH:mm", Locale.getDefault()) }
 
     Column(
@@ -899,11 +1120,11 @@ private fun GroupedHistoryDetailSheet(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            CallerAvatar(title = group.displayTitle, photoUri = group.photoUri, size = 50.dp)
+            CallerAvatar(title = sheetTitle, photoUri = sheetPhoto, size = 50.dp)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = group.displayTitle,
+                    text = sheetTitle,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -915,6 +1136,13 @@ private fun GroupedHistoryDetailSheet(
                     fontFamily = JetBrainsMonoFontFamily,
                     fontSize = 14.sp,
                     color = Color(0xFF15803D)
+                )
+                Text(
+                    text = "${callerReport.statusBadge} • ${callerReport.subStatusLine}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 if (!savedNote.isNullOrBlank()) {
                     Text(

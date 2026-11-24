@@ -122,7 +122,15 @@ data class DialerSettings(
     val sim1RingtoneUri: String? = null,
     val sim1RingtoneName: String? = null,
     val sim2RingtoneUri: String? = null,
-    val sim2RingtoneName: String? = null
+    val sim2RingtoneName: String? = null,
+    val callerIdEnabled: Boolean = true,
+    val spamDetectionEnabled: Boolean = true,
+    val fraudWarningEnabled: Boolean = true,
+    val autoSpamCategoryEnabled: Boolean = true,
+    val appLockEnabled: Boolean = false,
+    val pinProtectedSettingsEnabled: Boolean = false,
+    val sensitiveContactProtectionEnabled: Boolean = false,
+    val hasSecurityPin: Boolean = false
 )
 
 data class OutgoingAnimationState(

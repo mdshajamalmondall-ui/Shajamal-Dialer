@@ -99,10 +99,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import com.example.data.model.BlockedNumberEntry
+import com.example.data.model.CallerIdentityReport
+import com.example.data.model.CallerTrustStatus
+import com.example.data.model.CommunitySpamReport
 import com.example.data.model.DialerSettings
+import com.example.data.model.PrivateContactEntry
+import com.example.data.preferences.PrivacyVaultDataStore
 import com.example.data.preferences.SettingsDataStore
+import com.example.data.telephony.CallerIntelligenceEngine
 import com.example.data.telephony.PhoneNumberInfoHelper
 import com.example.ui.components.CallingOrbitAnimation
+import com.example.ui.components.IncomingCallerIdCard
 import com.example.ui.components.RingingStatusPill
 import com.example.ui.components.ThemeBackdrop
 import com.example.ui.theme.CallEndRed
@@ -131,9 +139,14 @@ class CallActivity : ComponentActivity() {
         }
         enableEdgeToEdge()
         val settingsDataStore = SettingsDataStore(applicationContext)
+        val privacyVaultDataStore = PrivacyVaultDataStore(applicationContext)
 
         setContent {
             val settings by settingsDataStore.settingsFlow.collectAsState(initial = DialerSettings())
+            val blockedNumbers by settingsDataStore.blockedNumbersFlow.collectAsState(initial = emptyList())
+            val communityReports by settingsDataStore.communityReportsFlow.collectAsState(initial = emptyMap())
+            val numberNotes by settingsDataStore.numberNotesFlow.collectAsState(initial = emptyMap())
+            val privateContacts by privacyVaultDataStore.privateContactsFlow.collectAsState(initial = emptyList())
             val activeCall by CallRepository.activeCallState.collectAsState()
             val theme = ThemeCatalog.byId(settings.selectedThemeId)
 
@@ -159,7 +172,34 @@ class CallActivity : ComponentActivity() {
                     dimAlpha = settings.overlayDimAlpha
                 ) {
                     activeCall?.let { callState ->
-                        InCallScreen(callState = callState)
+                        val canonical = PhoneNumberInfoHelper.canonicalKey(callState.number)
+                        val note = if (canonical.isNotBlank()) numberNotes[canonical] else null
+                        val callerReport = remember(
+                            callState.number,
+                            callState.callerName,
+                            callState.photoUri,
+                            note,
+                            blockedNumbers,
+                            communityReports,
+                            privateContacts,
+                            settings
+                        ) {
+                            CallerIntelligenceEngine.evaluate(
+                                rawNumber = callState.number,
+                                contactName = callState.callerName,
+                                photoUri = callState.photoUri,
+                                note = note,
+                                blockedNumbers = blockedNumbers,
+                                communityReports = communityReports,
+                                privateContacts = privateContacts,
+                                settings = settings
+                            )
+                        }
+                        InCallScreen(
+                            callState = callState,
+                            callerReport = callerReport,
+                            showCallerIdPill = settings.callerIdEnabled
+                        )
                     }
                 }
             }
@@ -168,7 +208,11 @@ class CallActivity : ComponentActivity() {
 }
 
 @Composable
-private fun InCallScreen(callState: ActiveCallUiState) {
+private fun InCallScreen(
+    callState: ActiveCallUiState,
+    callerReport: CallerIdentityReport,
+    showCallerIdPill: Boolean
+) {
     val context = LocalContext.current
     val strings = LocalAppStrings.current
     val scope = rememberCoroutineScope()
@@ -220,16 +264,18 @@ private fun InCallScreen(callState: ActiveCallUiState) {
         else -> strings.ringingStatus
     }
 
-    val avatarText = (callState.callerName?.firstOrNull() ?: callState.number.firstOrNull() ?: '?')
+    val visibleCallerTitle = if (callerReport.isSensitiveMasked) {
+        callerReport.displayName
+    } else {
+        callState.callerName ?: if (callerReport.isBusinessVerified) callerReport.displayName else callState.number
+    }
+    val visiblePhotoUri = if (callerReport.isSensitiveMasked) null else callState.photoUri
+    val avatarText = (visibleCallerTitle.firstOrNull() ?: callState.number.firstOrNull() ?: '?')
         .uppercaseChar()
         .toString()
 
-    val formattedNumber = remember(callState.number) {
-        PhoneNumberInfoHelper.formatDisplayNumber(callState.number)
-    }
-    val carrierText = remember(callState.number) {
-        PhoneNumberInfoHelper.detectCarrierAndRegion(callState.number).substringBefore(" ·")
-    }
+    val formattedNumber = callerReport.formattedNumber
+    val carrierText = callerReport.carrierRegion.substringBefore(" ·")
     val subtitleLine = buildString {
         append(formattedNumber)
         if (!callState.simLabel.isNullOrBlank()) {
@@ -255,6 +301,61 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                 )
             )
     ) {
+        if (callState.callState == Call.STATE_RINGING) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(horizontal = 20.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                RingingStatusPill(statusText = statusText)
+
+                IncomingCallerIdCard(
+                    report = callerReport,
+                    simLabel = callState.simLabel,
+                    onDecline = { CallRepository.rejectOrDisconnect() },
+                    onMessage = { showQuickMessageDialog = true },
+                    onAnswer = { CallRepository.answerCall() }
+                )
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 28.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IncomingActionIconLabel(
+                            icon = Icons.Rounded.Alarm,
+                            label = strings.remindMe,
+                            onClick = { showRemindDialog = true },
+                            modifier = Modifier.testTag("in_call_remind_me_button")
+                        )
+                        IncomingActionIconLabel(
+                            icon = Icons.Rounded.ChatBubble,
+                            label = strings.messageLabel,
+                            onClick = { showQuickMessageDialog = true },
+                            modifier = Modifier.testTag("in_call_message_button")
+                        )
+                    }
+
+                    SlideToAnswerBar(
+                        label = strings.slideToAnswer,
+                        onAnswer = { CallRepository.answerCall() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("in_call_slide_to_answer")
+                    )
+                }
+            }
+        } else {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -305,7 +406,7 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                 Spacer(Modifier.height(18.dp))
 
                 Text(
-                    text = callState.callerName ?: callState.number,
+                    text = visibleCallerTitle,
                     style = MaterialTheme.typography.displayLarge,
                     color = Color.White,
                     textAlign = TextAlign.Center
@@ -319,6 +420,30 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                     color = Color.White.copy(alpha = 0.84f),
                     textAlign = TextAlign.Center
                 )
+
+                if (showCallerIdPill) {
+                    Spacer(Modifier.height(10.dp))
+                    val pillColor = when (callerReport.status) {
+                        CallerTrustStatus.VERIFIED_BUSINESS, CallerTrustStatus.VERIFIED_CONTACT -> Color(0xFF22C55E)
+                        CallerTrustStatus.FRAUD_WARNING, CallerTrustStatus.BLOCKED -> Color(0xFFEF4444)
+                        CallerTrustStatus.SPAM_SUSPECTED -> Color(0xFFF59E0B)
+                        CallerTrustStatus.SENSITIVE_PROTECTED -> Color(0xFF818CF8)
+                        CallerTrustStatus.UNKNOWN_CLEAN -> Color(0xFF38BDF8)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = pillColor.copy(alpha = 0.2f),
+                        border = BorderStroke(1.dp, pillColor.copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = callerReport.statusBadge,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        )
+                    }
+                }
             }
 
             // Centerpiece: Continuously rotating orbital animation until answered, OR DTMF Keypad
@@ -329,7 +454,7 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                         accentColor = MaterialTheme.colorScheme.primary,
                         secondaryColor = Color(0xFFFDE68A),
                         size = 250.dp,
-                        photoUri = callState.photoUri
+                        photoUri = visiblePhotoUri
                     )
                 } else {
                     Box(
@@ -347,10 +472,10 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                             color = Color.White,
                             fontWeight = FontWeight.Bold
                         )
-                        if (!callState.photoUri.isNullOrBlank()) {
+                        if (!visiblePhotoUri.isNullOrBlank()) {
                             AsyncImage(
-                                model = callState.photoUri,
-                                contentDescription = callState.callerName ?: callState.number,
+                                model = visiblePhotoUri,
+                                contentDescription = visibleCallerTitle,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -574,6 +699,7 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                     }
                 }
             }
+        }
         }
     }
 
