@@ -381,6 +381,7 @@ private fun ShajamalApp(
                             ) {
                                 composable(ShajamalRoutes.RECENTS) {
                                     val groupedCallLogs by viewModel.groupedCallLogs.collectAsStateWithLifecycle()
+                                    val isCallLogsLoading by viewModel.isCallLogsLoading.collectAsStateWithLifecycle()
                                     val callAnalytics by viewModel.callAnalytics.collectAsStateWithLifecycle()
                                     val todayCallCount by viewModel.todayCallCount.collectAsStateWithLifecycle()
                                     val callLogFilter by viewModel.callLogFilter.collectAsStateWithLifecycle()
@@ -396,6 +397,7 @@ private fun ShajamalApp(
 
                                     RecentsScreen(
                                         groupedLogs = groupedCallLogs,
+                                        isLoading = isCallLogsLoading,
                                         analytics = callAnalytics,
                                         todayCallCount = todayCallCount,
                                         activeFilter = callLogFilter,
@@ -505,11 +507,13 @@ private fun ShajamalApp(
 
                                 composable(ShajamalRoutes.CONTACTS) {
                                     val contacts by viewModel.filteredContacts.collectAsStateWithLifecycle()
+                                    val isContactsLoading by viewModel.isContactsLoading.collectAsStateWithLifecycle()
                                     val contactSearchQuery by viewModel.contactSearchQuery.collectAsStateWithLifecycle()
                                     val permissions by viewModel.permissions.collectAsStateWithLifecycle()
 
                                     ContactsScreen(
                                         contacts = contacts,
+                                        isLoading = isContactsLoading,
                                         searchQuery = contactSearchQuery,
                                         permissions = permissions,
                                         onSearchQueryChange = viewModel::setContactSearchQuery,
@@ -544,10 +548,12 @@ private fun ShajamalApp(
 
                                 composable(ShajamalRoutes.FAVORITES) {
                                     val favorites by viewModel.favoriteContacts.collectAsStateWithLifecycle()
+                                    val isContactsLoading by viewModel.isContactsLoading.collectAsStateWithLifecycle()
                                     val permissions by viewModel.permissions.collectAsStateWithLifecycle()
 
                                     FavoritesScreen(
                                         favorites = favorites,
+                                        isLoading = isContactsLoading,
                                         permissions = permissions,
                                         onCallContact = viewModel::openSimPickerForNumber,
                                         onOpenSettings = {

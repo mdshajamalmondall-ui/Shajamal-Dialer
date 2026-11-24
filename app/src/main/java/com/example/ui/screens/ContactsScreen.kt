@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.content.Intent
 import android.provider.ContactsContract
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.rounded.Dialpad
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -66,10 +68,13 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.LocalPictureTheme
 
+private val ContactCardShape = RoundedCornerShape(18.dp)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContactsScreen(
     contacts: List<ContactItem>,
+    isLoading: Boolean = false,
     searchQuery: String,
     permissions: PermissionSnapshot,
     onSearchQueryChange: (String) -> Unit,
@@ -149,6 +154,18 @@ fun ContactsScreen(
                     actionLabel = strings.grantPermission,
                     onAction = onRequestPermissions
                 )
+            } else if (isLoading && contacts.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(34.dp)
+                    )
+                }
             } else if (contacts.isEmpty()) {
                 EmptyStateCard(
                     icon = Icons.Rounded.Contacts,
@@ -228,13 +245,12 @@ private fun ContactCard(
     onClick: () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        onClick = onClick,
+        shape = ContactCardShape,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
             .testTag("contact_card_${contact.id}")
     ) {
         Row(
@@ -400,15 +416,17 @@ private fun ContactAvatar(
     photoUri: String?,
     size: androidx.compose.ui.unit.Dp
 ) {
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-        modifier = Modifier.size(size)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(size)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), CircleShape)
+            .clip(CircleShape)
     ) {
         if (!photoUri.isNullOrBlank()) {
             val context = LocalContext.current
             val request = remember(photoUri) {
-                ImageRequest.Builder(context).data(photoUri).size(128).crossfade(false).build()
+                ImageRequest.Builder(context).data(photoUri).size(112).crossfade(false).build()
             }
             AsyncImage(
                 model = request,
@@ -417,14 +435,12 @@ private fun ContactAvatar(
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
+            Text(
+                text = name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }

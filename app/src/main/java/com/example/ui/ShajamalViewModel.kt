@@ -181,10 +181,23 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
     private val _isDefaultDialer = MutableStateFlow(false)
     val isDefaultDialer: StateFlow<Boolean> = _isDefaultDialer.asStateFlow()
 
-    private val _permissions = MutableStateFlow(PermissionSnapshot())
+    private val initialPermissionSnapshot = readPermissionSnapshotSync(canFullScreen = true)
+    private val initialCachedLogs: List<CallLogItem> = if (initialPermissionSnapshot.readCallLog) {
+        settingsDataStore.getCachedCallLogsFast()
+    } else {
+        emptyList()
+    }
+    private val initialGroupedLogs: List<GroupedCallLogItem> = if (initialCachedLogs.isNotEmpty()) {
+        groupAndFilterCallLogs(initialCachedLogs, emptyList(), CallLogFilter.ALL, "")
+    } else {
+        emptyList()
+    }
+
+    private val _permissions = MutableStateFlow(initialPermissionSnapshot)
     val permissions: StateFlow<PermissionSnapshot> = _permissions.asStateFlow()
 
-    private val _allCallLogs = MutableStateFlow<List<CallLogItem>>(emptyList())
+    private val _allCallLogs = MutableStateFlow<List<CallLogItem>>(initialCachedLogs)
+    private val _callLogsFetchedOnce = MutableStateFlow(false)
     private val _callLogFilter = MutableStateFlow(CallLogFilter.ALL)
     val callLogFilter: StateFlow<CallLogFilter> = _callLogFilter.asStateFlow()
 
@@ -192,18 +205,41 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
     val recentsSearchQuery: StateFlow<String> = _recentsSearchQuery.asStateFlow()
 
     private val _allContacts = MutableStateFlow<List<ContactItem>>(emptyList())
+    private val _contactsFetchedOnce = MutableStateFlow(false)
     private val _contactSearchQuery = MutableStateFlow("")
     val contactSearchQuery: StateFlow<String> = _contactSearchQuery.asStateFlow()
 
-    val groupedCallLogs: StateFlow<List<GroupedCallLogItem>> = combine(
+    private val _recentsCombined: StateFlow<Pair<List<GroupedCallLogItem>, Boolean>> = combine(
         _allCallLogs,
         _allContacts,
         _callLogFilter,
-        _recentsSearchQuery
-    ) { logs, contacts, filter, query ->
-        groupAndFilterCallLogs(logs, contacts, filter, query)
+        _recentsSearchQuery,
+        _callLogsFetchedOnce
+    ) { logs, contacts, filter, query, fetchedOnce ->
+        val grouped = groupAndFilterCallLogs(logs, contacts, filter, query)
+        val loading = !fetchedOnce && grouped.isEmpty()
+        grouped to loading
     }.flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = initialGroupedLogs to (initialPermissionSnapshot.readCallLog && initialGroupedLogs.isEmpty())
+        )
+
+    val groupedCallLogs: StateFlow<List<GroupedCallLogItem>> = _recentsCombined
+        .map { it.first }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), initialGroupedLogs)
+
+    val isCallLogsLoading: StateFlow<Boolean> = combine(
+        _permissions,
+        _recentsCombined
+    ) { perms, recents ->
+        perms.readCallLog && recents.second
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = initialPermissionSnapshot.readCallLog && initialGroupedLogs.isEmpty()
+    )
 
     val recentsCallerReports: StateFlow<Map<String, CallerIdentityReport>> = combine(
         groupedCallLogs,
@@ -294,11 +330,12 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
             CallAnalyticsSummary(0, 0, 0, 0, 0, 0, 0L, emptyList())
         )
 
-    val filteredContacts: StateFlow<List<ContactItem>> = combine(
+    private val _contactsCombined: StateFlow<Pair<List<ContactItem>, Boolean>> = combine(
         _allContacts,
         privateContacts,
-        _contactSearchQuery
-    ) { contacts, privates, query ->
+        _contactSearchQuery,
+        _contactsFetchedOnce
+    ) { contacts, privates, query, fetchedOnce ->
         val privateKeys = privates.mapNotNull {
             PhoneNumberInfoHelper.canonicalKey(it.number).takeIf { k -> k.isNotBlank() }
         }.toSet()
@@ -310,7 +347,7 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
             }
         }
         val trimmed = query.trim()
-        if (trimmed.isEmpty()) {
+        val filtered = if (trimmed.isEmpty()) {
             publicContacts
         } else {
             publicContacts.filter { contact ->
@@ -318,8 +355,29 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
                     contact.phoneNumbers.any { it.contains(trimmed, ignoreCase = true) }
             }
         }
+        val loading = !fetchedOnce && filtered.isEmpty()
+        filtered to loading
     }.flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList<ContactItem>() to initialPermissionSnapshot.readContacts
+        )
+
+    val filteredContacts: StateFlow<List<ContactItem>> = _contactsCombined
+        .map { it.first }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val isContactsLoading: StateFlow<Boolean> = combine(
+        _permissions,
+        _contactsCombined
+    ) { perms, combined ->
+        perms.readContacts && combined.second
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = initialPermissionSnapshot.readContacts
+    )
 
     val favoriteContacts: StateFlow<List<ContactItem>> = _allContacts.map { contacts ->
         contacts.filter { it.isStarred }
@@ -390,27 +448,15 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
         lastDeviceRefreshMillis = now
 
         viewModelScope.launch {
+            launch(Dispatchers.IO) { runCatching { settingsDataStore.syncFastCallCache() } }
+
             val (snapshot, defaultDialer, slots) = withContext(Dispatchers.IO) {
                 val canFullScreen = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() ?: true
                 } else {
                     true
                 }
-                val permSnapshot = PermissionSnapshot(
-                    callPhone = hasPermission(Manifest.permission.CALL_PHONE),
-                    readPhoneState = hasPermission(Manifest.permission.READ_PHONE_STATE),
-                    readCallLog = hasPermission(Manifest.permission.READ_CALL_LOG),
-                    writeCallLog = hasPermission(Manifest.permission.WRITE_CALL_LOG),
-                    readContacts = hasPermission(Manifest.permission.READ_CONTACTS),
-                    writeContacts = hasPermission(Manifest.permission.WRITE_CONTACTS),
-                    postNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        hasPermission(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        true
-                    },
-                    canUseFullScreenIntent = canFullScreen
-                )
-                runCatching { settingsDataStore.syncFastCallCache() }
+                val permSnapshot = readPermissionSnapshotSync(canFullScreen)
                 Triple(
                     permSnapshot,
                     dualSimCallManager.isDefaultDialer(),
@@ -422,11 +468,32 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
             _isDefaultDialer.value = defaultDialer
             _simSlots.value = slots
 
+            var freshLogs: List<CallLogItem> = emptyList()
+            var freshContacts: List<ContactItem> = emptyList()
+
             coroutineScope {
-                val logsDeferred = async { directoryRepository.loadCallLogs(slots, limit = 300) }
-                val contactsDeferred = async { directoryRepository.loadContacts() }
-                _allCallLogs.value = logsDeferred.await()
-                _allContacts.value = contactsDeferred.await()
+                val logsDeferred = async {
+                    directoryRepository.loadCallLogs(slots, limit = 300).also { loaded ->
+                        freshLogs = loaded
+                        _allCallLogs.value = loaded
+                        _callLogsFetchedOnce.value = true
+                    }
+                }
+                val contactsDeferred = async {
+                    directoryRepository.loadContacts().also { loaded ->
+                        freshContacts = loaded
+                        _allContacts.value = loaded
+                        _contactsFetchedOnce.value = true
+                    }
+                }
+                logsDeferred.await()
+                contactsDeferred.await()
+            }
+
+            if (snapshot.readCallLog) {
+                launch(Dispatchers.IO) {
+                    runCatching { settingsDataStore.cacheRecentCallLogs(freshLogs, freshContacts) }
+                }
             }
 
             if (!autoCheckedBalanceThisSession && snapshot.hasCoreDialerPermissions) {
@@ -434,6 +501,23 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
                 autoRefreshStaleSimBalances(slots)
             }
         }
+    }
+
+    private fun readPermissionSnapshotSync(canFullScreen: Boolean): PermissionSnapshot {
+        return PermissionSnapshot(
+            callPhone = hasPermission(Manifest.permission.CALL_PHONE),
+            readPhoneState = hasPermission(Manifest.permission.READ_PHONE_STATE),
+            readCallLog = hasPermission(Manifest.permission.READ_CALL_LOG),
+            writeCallLog = hasPermission(Manifest.permission.WRITE_CALL_LOG),
+            readContacts = hasPermission(Manifest.permission.READ_CONTACTS),
+            writeContacts = hasPermission(Manifest.permission.WRITE_CONTACTS),
+            postNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                true
+            },
+            canUseFullScreenIntent = canFullScreen
+        )
     }
 
     private fun autoRefreshStaleSimBalances(slots: List<SimSlotInfo>) {

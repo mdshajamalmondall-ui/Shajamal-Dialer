@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/img_shajamal_launcher_fg"
+        android:drawable="@drawable/ic_shajamal_dialer_fg_1795512451865"
         android:gravity="center" />
 </layer-list>

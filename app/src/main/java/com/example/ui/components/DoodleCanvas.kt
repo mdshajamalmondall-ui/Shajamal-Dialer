@@ -3,13 +3,18 @@ package com.example.ui.components
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageBitmapConfig
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -30,41 +35,58 @@ fun DoodleCanvas(
     val strokeColor = tintColor.copy(alpha = if (isLightTheme) 0.14f else 0.16f)
     val accentStroke = tintColor.copy(alpha = if (isLightTheme) 0.09f else 0.11f)
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .drawWithCache {
-                val w = size.width
-                val h = size.height
-                val cell = (minOf(w, h) / 3.4f).coerceAtLeast(160f)
-                val cols = (w / cell).toInt() + 2
-                val rows = (h / cell).toInt() + 2
-                onDrawBehind {
-                    for (r in 0..rows) {
-                        for (c in 0..cols) {
-                            val offsetX = if (r % 2 == 1) cell * 0.5f else 0f
-                            val cx = c * cell + offsetX
-                            val cy = r * cell
-                            val angle = ((r * 37 + c * 53) % 45 - 22).toFloat()
-                            val color = if ((r + c) % 2 == 0) strokeColor else accentStroke
+    key(design, strokeColor, accentStroke) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .drawWithCache {
+                    val w = size.width
+                    val h = size.height
+                    val bmpW = w.toInt().coerceAtLeast(1)
+                    val bmpH = h.toInt().coerceAtLeast(1)
+                    val cachedBitmap = ImageBitmap(bmpW, bmpH, ImageBitmapConfig.Argb8888)
+                    val canvas = Canvas(cachedBitmap)
+                    val canvasDrawScope = CanvasDrawScope()
+                    val cell = (minOf(w, h) / 3.4f).coerceAtLeast(160f)
+                    val cols = (w / cell).toInt() + 2
+                    val rows = (h / cell).toInt() + 2
 
-                            when (design) {
-                                DoodleDesign.NONE -> Unit
-                                DoodleDesign.PHONE_DOODLE -> drawPhoneDoodle(cx, cy, cell * 0.24f, angle, color)
-                                DoodleDesign.COSMIC_STAR -> drawCosmicStar(cx, cy, cell * 0.25f, r + c, color)
-                                DoodleDesign.FLORAL_LEAVES -> drawFloralLeaf(cx, cy, cell * 0.26f, angle, color)
-                                DoodleDesign.GEOMETRIC_HEARTS -> drawGeometricHeart(cx, cy, cell * 0.22f, angle, color)
-                                DoodleDesign.ROYAL_MANDALA -> drawRoyalMandala(cx, cy, cell * 0.28f, color)
-                                DoodleDesign.OCEAN_RIPPLES -> drawOceanRipples(cx, cy, cell * 0.28f, color)
-                                DoodleDesign.CYBER_CIRCUIT -> drawCyberCircuit(cx, cy, cell * 0.3f, r + c, color)
-                                DoodleDesign.MUSIC_BEAT -> drawMusicBeat(cx, cy, cell * 0.23f, angle, color)
-                                DoodleDesign.BUTTERFLY -> drawButterfly(cx, cy, cell * 0.25f, angle, color)
+                    canvasDrawScope.draw(
+                        density = this,
+                        layoutDirection = layoutDirection,
+                        canvas = canvas,
+                        size = size
+                    ) {
+                        for (r in 0..rows) {
+                            for (c in 0..cols) {
+                                val offsetX = if (r % 2 == 1) cell * 0.5f else 0f
+                                val cx = c * cell + offsetX
+                                val cy = r * cell
+                                val angle = ((r * 37 + c * 53) % 45 - 22).toFloat()
+                                val color = if ((r + c) % 2 == 0) strokeColor else accentStroke
+
+                                when (design) {
+                                    DoodleDesign.NONE -> Unit
+                                    DoodleDesign.PHONE_DOODLE -> drawPhoneDoodle(cx, cy, cell * 0.24f, angle, color)
+                                    DoodleDesign.COSMIC_STAR -> drawCosmicStar(cx, cy, cell * 0.25f, r + c, color)
+                                    DoodleDesign.FLORAL_LEAVES -> drawFloralLeaf(cx, cy, cell * 0.26f, angle, color)
+                                    DoodleDesign.GEOMETRIC_HEARTS -> drawGeometricHeart(cx, cy, cell * 0.22f, angle, color)
+                                    DoodleDesign.ROYAL_MANDALA -> drawRoyalMandala(cx, cy, cell * 0.28f, color)
+                                    DoodleDesign.OCEAN_RIPPLES -> drawOceanRipples(cx, cy, cell * 0.28f, color)
+                                    DoodleDesign.CYBER_CIRCUIT -> drawCyberCircuit(cx, cy, cell * 0.3f, r + c, color)
+                                    DoodleDesign.MUSIC_BEAT -> drawMusicBeat(cx, cy, cell * 0.23f, angle, color)
+                                    DoodleDesign.BUTTERFLY -> drawButterfly(cx, cy, cell * 0.25f, angle, color)
+                                }
                             }
                         }
                     }
+
+                    onDrawBehind {
+                        drawImage(cachedBitmap)
+                    }
                 }
-            }
-    )
+        )
+    }
 }
 
 private fun DrawScope.drawPhoneDoodle(cx: Float, cy: Float, r: Float, angle: Float, color: Color) {

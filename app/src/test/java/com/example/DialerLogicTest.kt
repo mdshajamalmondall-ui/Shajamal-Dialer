@@ -10,6 +10,7 @@ import com.example.data.model.DialerSettings
 import com.example.data.model.DoodleDesign
 import com.example.data.model.PrivateContactEntry
 import com.example.data.model.SpamCategory
+import com.example.data.preferences.SettingsDataStore
 import com.example.data.telephony.CallerIntelligenceEngine
 import com.example.data.telephony.DeviceDirectoryRepository
 import com.example.data.telephony.DualSimCallManager
@@ -258,5 +259,19 @@ class DialerLogicTest {
             "$14.80",
             SimBalanceManager.extractBalanceShort("Account balance is $14.80")
         )
+    }
+
+    @Test
+    fun `settingsDataStore callLogCache serializes and parses recent call items without data loss`() {
+        val sample = listOf(
+            CallLogItem(101L, "+8801712345678", "Torikul\tIslam", CallDirection.OUTGOING, 1700000000L, 42L, "acc1", 0),
+            CallLogItem(102L, "01988604043", null, CallDirection.MISSED, 1699999000L, 0L, null, 1)
+        )
+        val encoded = SettingsDataStore.serializeCallLogsCache(sample)
+        val parsed = SettingsDataStore.parseCallLogsCache(encoded)
+        assertEquals(2, parsed.size)
+        assertEquals(sample[0], parsed[0])
+        assertEquals(sample[1], parsed[1])
+        assertTrue(SettingsDataStore.parseCallLogsCache("").isEmpty())
     }
 }

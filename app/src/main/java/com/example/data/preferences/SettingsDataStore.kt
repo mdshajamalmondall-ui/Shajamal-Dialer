@@ -15,7 +15,10 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.AppLanguage
 import com.example.data.model.BlockedNumberEntry
+import com.example.data.model.CallDirection
+import com.example.data.model.CallLogItem
 import com.example.data.model.CommunitySpamReport
+import com.example.data.model.ContactItem
 import com.example.data.model.DialerSettings
 import com.example.data.model.DoodleDesign
 import com.example.data.model.DualSimMode
@@ -493,6 +496,43 @@ class SettingsDataStore(private val context: Context) {
 
     fun isSensitiveProtectionFast(): Boolean = fastPrefs.getBoolean("sensitive_protection", false)
 
+    fun getCachedCallLogsFast(): List<CallLogItem> {
+        val raw = fastPrefs.getString("cached_recent_calls_v2", null).orEmpty()
+        return parseCallLogsCache(raw)
+    }
+
+    fun cacheRecentCallLogs(
+        logs: List<CallLogItem>,
+        contacts: List<ContactItem> = emptyList()
+    ) {
+        val contactNames = if (contacts.isEmpty()) {
+            emptyMap()
+        } else {
+            buildMap(contacts.size) {
+                contacts.forEach { contact ->
+                    contact.phoneNumbers.forEach { num ->
+                        val key = PhoneNumberInfoHelper.canonicalKey(num)
+                        if (key.isNotBlank() && key !in this) {
+                            put(key, contact.name)
+                        }
+                    }
+                }
+            }
+        }
+        val enriched = logs.take(60).map { item ->
+            if (!item.cachedName.isNullOrBlank()) {
+                item
+            } else {
+                val key = PhoneNumberInfoHelper.canonicalKey(item.number)
+                val resolved = if (key.isNotBlank()) contactNames[key] else null
+                if (resolved != null) item.copy(cachedName = resolved) else item
+            }
+        }
+        fastPrefs.edit()
+            .putString("cached_recent_calls_v2", serializeCallLogsCache(enriched))
+            .apply()
+    }
+
     suspend fun syncFastCallCache() {
         val prefs = context.settingsDataStore.data.first()
         val blockedKeys = prefs[Keys.BLOCKED_NUMBERS].orEmpty().mapNotNull {
@@ -600,5 +640,59 @@ class SettingsDataStore(private val context: Context) {
             )
         }
         return arr.toString()
+    }
+
+    companion object {
+        private fun encodeField(value: String): String =
+            value.replace("%", "%25").replace("\t", "%09").replace("\n", "%0A").replace("\r", "%0D")
+
+        private fun decodeField(value: String): String =
+            value.replace("%0D", "\r").replace("%0A", "\n").replace("%09", "\t").replace("%25", "%")
+
+        fun serializeCallLogsCache(logs: List<CallLogItem>): String {
+            if (logs.isEmpty()) return ""
+            return logs.take(60).joinToString(separator = "\n") { item ->
+                listOf(
+                    item.id.toString(),
+                    encodeField(item.number),
+                    encodeField(item.cachedName.orEmpty()),
+                    item.direction.name,
+                    item.dateMillis.toString(),
+                    item.durationSeconds.toString(),
+                    encodeField(item.phoneAccountId.orEmpty()),
+                    item.simSlotIndex?.toString().orEmpty()
+                ).joinToString(separator = "\t")
+            }
+        }
+
+        fun parseCallLogsCache(raw: String): List<CallLogItem> {
+            if (raw.isBlank()) return emptyList()
+            return runCatching {
+                raw.lineSequence().mapNotNull { line ->
+                    if (line.isBlank()) return@mapNotNull null
+                    val parts = line.split('\t')
+                    if (parts.size < 8) return@mapNotNull null
+                    val id = parts[0].toLongOrNull() ?: return@mapNotNull null
+                    val number = decodeField(parts[1])
+                    val cachedName = decodeField(parts[2]).takeIf { it.isNotBlank() }
+                    val direction = runCatching { CallDirection.valueOf(parts[3]) }
+                        .getOrDefault(CallDirection.INCOMING)
+                    val dateMillis = parts[4].toLongOrNull() ?: 0L
+                    val durationSeconds = parts[5].toLongOrNull() ?: 0L
+                    val phoneAccountId = decodeField(parts[6]).takeIf { it.isNotBlank() }
+                    val simSlotIndex = parts[7].toIntOrNull()?.takeIf { it >= 0 }
+                    CallLogItem(
+                        id = id,
+                        number = number,
+                        cachedName = cachedName,
+                        direction = direction,
+                        dateMillis = dateMillis,
+                        durationSeconds = durationSeconds,
+                        phoneAccountId = phoneAccountId,
+                        simSlotIndex = simSlotIndex
+                    )
+                }.toList()
+            }.getOrDefault(emptyList())
+        }
     }
 }

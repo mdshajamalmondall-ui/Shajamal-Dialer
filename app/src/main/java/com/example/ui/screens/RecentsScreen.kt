@@ -1,9 +1,15 @@
 package com.example.ui.screens
 
 import android.text.format.DateUtils
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -67,13 +73,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -81,9 +85,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -115,11 +121,22 @@ import com.example.ui.theme.LocalAppStrings
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
+
+private val RecentCardShape = RoundedCornerShape(18.dp)
+private val RecentPillShape = RoundedCornerShape(50)
+private val RecentInfoChipShape = RoundedCornerShape(8.dp)
+private val Sim1BadgeColor = Color(0xFF16A34A)
+private val Sim2BadgeColor = Color(0xFF2563EB)
+private val AmberWarnColor = Color(0xFFD97706)
+private val EmeraldTextColor = Color(0xFF15803D)
+private val IndigoPrivacyColor = Color(0xFF4F46E5)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun RecentsScreen(
     groupedLogs: List<GroupedCallLogItem>,
+    isLoading: Boolean = false,
     analytics: CallAnalyticsSummary,
     todayCallCount: Int,
     activeFilter: CallLogFilter,
@@ -394,6 +411,8 @@ fun RecentsScreen(
             )
         }
 
+        val nowMillis = remember(groupedLogs) { System.currentTimeMillis() }
+
         if (!permissions.readCallLog) {
             EmptyStateCard(
                 icon = Icons.Rounded.History,
@@ -402,11 +421,23 @@ fun RecentsScreen(
                 actionLabel = strings.grantPermission,
                 onAction = onRequestPermissions
             )
+        } else if (isLoading && groupedLogs.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(34.dp)
+                )
+            }
         } else if (groupedLogs.isEmpty()) {
             EmptyStateCard(
                 icon = Icons.Rounded.History,
-                title = strings.noCallHistoryTitle,
-                subtitle = strings.noCallHistorySub,
+                title = if (searchQuery.isNotBlank()) strings.noSearchMatches else strings.noCallHistoryTitle,
+                subtitle = if (searchQuery.isNotBlank()) strings.tryAnotherSearch else strings.noCallHistorySub,
                 actionLabel = null,
                 onAction = {}
             )
@@ -444,61 +475,12 @@ fun RecentsScreen(
                         )
                     }
 
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { value ->
-                            when (value) {
-                                SwipeToDismissBoxValue.StartToEnd -> {
-                                    onCallChooseSim(group.number)
-                                    false
-                                }
-                                SwipeToDismissBoxValue.EndToStart -> {
-                                    onDeleteMultiple(group.allIds)
-                                    false
-                                }
-                                SwipeToDismissBoxValue.Settled -> false
-                            }
-                        }
-                    )
-
-                    SwipeToDismissBox(
-                        state = dismissState,
-                        backgroundContent = {
-                            val dir = dismissState.dismissDirection
-                            val isCallSwipe = dir == SwipeToDismissBoxValue.StartToEnd
-                            val bgColor = when (dir) {
-                                SwipeToDismissBoxValue.StartToEnd -> Color(0xFF16A34A)
-                                SwipeToDismissBoxValue.EndToStart -> CallMissedRed
-                                SwipeToDismissBoxValue.Settled -> Color.Transparent
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = bgColor,
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 20.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = if (isCallSwipe) Arrangement.Start else Arrangement.End
-                                ) {
-                                    if (dir != SwipeToDismissBoxValue.Settled) {
-                                        Icon(
-                                            imageVector = if (isCallSwipe) Icons.Rounded.Call else Icons.Rounded.DeleteOutline,
-                                            contentDescription = if (isCallSwipe) strings.callButton else strings.delete,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(
-                                            text = if (isCallSwipe) strings.callButton else strings.delete,
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                    SwipeActionRow(
+                        rowKey = group.groupKey,
+                        callLabel = strings.callButton,
+                        deleteLabel = strings.delete,
+                        onSwipeCall = { onCallChooseSim(group.number) },
+                        onSwipeDelete = { onDeleteMultiple(group.allIds) }
                     ) {
                         GroupedRecentCardContent(
                             group = group,
@@ -506,6 +488,7 @@ fun RecentsScreen(
                             showCallerIdBadge = settings.callerIdEnabled,
                             savedNote = savedNote,
                             isBlocked = blocked,
+                            nowMillis = nowMillis,
                             onCardClick = { activeHistoryGroupKey = group.groupKey },
                             onQuickCall = { onCallChooseSim(group.number) },
                             onOpenProfile = { onOpenFullProfile(group) },
@@ -711,12 +694,88 @@ fun RecentsScreen(
 }
 
 @Composable
+private fun SwipeActionRow(
+    rowKey: String,
+    callLabel: String,
+    deleteLabel: String,
+    onSwipeCall: () -> Unit,
+    onSwipeDelete: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    val density = LocalDensity.current
+    val maxSwipePx = remember(density) { with(density) { 128.dp.toPx() } }
+    val triggerPx = remember(density) { with(density) { 82.dp.toPx() } }
+    var rawOffset by remember(rowKey) { mutableFloatStateOf(0f) }
+    var isDragging by remember(rowKey) { mutableStateOf(false) }
+    val offsetX by animateFloatAsState(
+        targetValue = if (isDragging) rawOffset else 0f,
+        animationSpec = tween(durationMillis = if (isDragging) 0 else 180),
+        label = "swipe_offset"
+    )
+    val dragState = rememberDraggableState { delta ->
+        rawOffset = (rawOffset + delta).coerceIn(-maxSwipePx, maxSwipePx)
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        if (abs(offsetX) > 1f) {
+            val isCallSwipe = offsetX > 0f
+            Row(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        color = if (isCallSwipe) Sim1BadgeColor else CallMissedRed,
+                        shape = RecentCardShape
+                    )
+                    .padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (isCallSwipe) Arrangement.Start else Arrangement.End
+            ) {
+                Icon(
+                    imageVector = if (isCallSwipe) Icons.Rounded.Call else Icons.Rounded.DeleteOutline,
+                    contentDescription = if (isCallSwipe) callLabel else deleteLabel,
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = if (isCallSwipe) callLabel else deleteLabel,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer { translationX = offsetX }
+                .draggable(
+                    orientation = Orientation.Horizontal,
+                    state = dragState,
+                    onDragStarted = { isDragging = true },
+                    onDragStopped = {
+                        when {
+                            rawOffset >= triggerPx -> onSwipeCall()
+                            rawOffset <= -triggerPx -> onSwipeDelete()
+                        }
+                        isDragging = false
+                        rawOffset = 0f
+                    }
+                )
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
 private fun GroupedRecentCardContent(
     group: GroupedCallLogItem,
     callerReport: CallerIdentityReport,
     showCallerIdBadge: Boolean,
     savedNote: String?,
     isBlocked: Boolean,
+    nowMillis: Long,
     onCardClick: () -> Unit,
     onQuickCall: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -741,16 +800,16 @@ private fun GroupedRecentCardContent(
 
     val (dirIcon, dirColor) = when (group.latestDirection) {
         CallDirection.INCOMING -> Icons.AutoMirrored.Rounded.CallReceived to CallIncomingGreen
-        CallDirection.OUTGOING -> Icons.AutoMirrored.Rounded.CallMade to Color(0xFF0284C7)
+        CallDirection.OUTGOING -> Icons.AutoMirrored.Rounded.CallMade to CallOutgoingBlue
         CallDirection.MISSED -> Icons.AutoMirrored.Rounded.CallMissed to CallMissedRed
         CallDirection.REJECTED, CallDirection.BLOCKED -> Icons.Rounded.Block to CallMissedRed
         CallDirection.VOICEMAIL -> Icons.Rounded.Call to MaterialTheme.colorScheme.tertiary
     }
 
-    val relativeTime = remember(group.latestDateMillis) {
+    val relativeTime = remember(group.latestDateMillis, nowMillis) {
         DateUtils.getRelativeTimeSpanString(
             group.latestDateMillis,
-            System.currentTimeMillis(),
+            nowMillis,
             DateUtils.MINUTE_IN_MILLIS,
             DateUtils.FORMAT_ABBREV_RELATIVE
         ).toString()
@@ -758,19 +817,18 @@ private fun GroupedRecentCardContent(
 
     val cardBorderColor = when {
         isBlocked || callerReport.status == CallerTrustStatus.FRAUD_WARNING -> CallMissedRed.copy(alpha = 0.55f)
-        callerReport.status == CallerTrustStatus.SPAM_SUSPECTED -> Color(0xFFD97706).copy(alpha = 0.55f)
-        callerReport.status == CallerTrustStatus.SENSITIVE_PROTECTED -> Color(0xFF6366F1).copy(alpha = 0.45f)
+        callerReport.status == CallerTrustStatus.SPAM_SUSPECTED -> AmberWarnColor.copy(alpha = 0.55f)
+        callerReport.status == CallerTrustStatus.SENSITIVE_PROTECTED -> IndigoPrivacyColor.copy(alpha = 0.45f)
         else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
     }
 
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        onClick = onCardClick,
+        shape = RecentCardShape,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
         border = BorderStroke(width = 1.dp, color = cardBorderColor),
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onCardClick)
             .testTag("grouped_recent_card_${group.groupKey}")
     ) {
         Row(
@@ -798,8 +856,8 @@ private fun GroupedRecentCardContent(
                             isBlocked ||
                                 callerReport.status == CallerTrustStatus.FRAUD_WARNING ||
                                 group.latestDirection == CallDirection.MISSED -> CallMissedRed
-                            callerReport.status == CallerTrustStatus.VERIFIED_BUSINESS -> Color(0xFF15803D)
-                            callerReport.status == CallerTrustStatus.SENSITIVE_PROTECTED -> Color(0xFF4F46E5)
+                            callerReport.status == CallerTrustStatus.VERIFIED_BUSINESS -> EmeraldTextColor
+                            callerReport.status == CallerTrustStatus.SENSITIVE_PROTECTED -> IndigoPrivacyColor
                             else -> MaterialTheme.colorScheme.onSurface
                         },
                         maxLines = 1,
@@ -808,20 +866,17 @@ private fun GroupedRecentCardContent(
                     )
 
                     if (group.callCount > 1) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = Color(0xFFD97706).copy(alpha = 0.14f),
-                            border = BorderStroke(1.dp, Color(0xFFD97706).copy(alpha = 0.38f))
-                        ) {
-                            Text(
-                                text = "(${group.callCount})",
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFB45309),
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                            )
-                        }
+                        Text(
+                            text = "(${group.callCount})",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFB45309),
+                            modifier = Modifier
+                                .background(AmberWarnColor.copy(alpha = 0.14f), RecentPillShape)
+                                .border(1.dp, AmberWarnColor.copy(alpha = 0.38f), RecentPillShape)
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                        )
                     }
                 }
 
@@ -848,49 +903,45 @@ private fun GroupedRecentCardContent(
 
                     if (group.latestSimSlotIndex != null) {
                         val isSim1 = group.latestSimSlotIndex == 0
-                        val simColor = if (isSim1) Color(0xFF16A34A) else Color(0xFF2563EB)
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = simColor.copy(alpha = 0.12f),
-                            border = BorderStroke(1.dp, simColor.copy(alpha = 0.38f))
+                        val simColor = if (isSim1) Sim1BadgeColor else Sim2BadgeColor
+                        Row(
+                            modifier = Modifier
+                                .background(simColor.copy(alpha = 0.12f), RecentPillShape)
+                                .border(1.dp, simColor.copy(alpha = 0.38f), RecentPillShape)
+                                .padding(horizontal = 6.dp, vertical = 1.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.SimCard,
-                                    contentDescription = null,
-                                    tint = simColor,
-                                    modifier = Modifier.size(10.dp)
-                                )
-                                Spacer(Modifier.width(3.dp))
-                                Text(
-                                    text = "SIM ${group.latestSimSlotIndex + 1}",
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = simColor
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Rounded.SimCard,
+                                contentDescription = null,
+                                tint = simColor,
+                                modifier = Modifier.size(10.dp)
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                text = "SIM ${group.latestSimSlotIndex + 1}",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = simColor
+                            )
                         }
                     }
                 }
 
-                val showSpecialStatusBadge = callerReport.status in setOf(
-                    CallerTrustStatus.FRAUD_WARNING,
-                    CallerTrustStatus.SPAM_SUSPECTED,
-                    CallerTrustStatus.VERIFIED_BUSINESS,
-                    CallerTrustStatus.SENSITIVE_PROTECTED,
-                    CallerTrustStatus.BLOCKED
-                ) || (showCallerIdBadge && callerReport.status == CallerTrustStatus.UNKNOWN_CLEAN)
+                val showSpecialStatusBadge = callerReport.status == CallerTrustStatus.FRAUD_WARNING ||
+                    callerReport.status == CallerTrustStatus.SPAM_SUSPECTED ||
+                    callerReport.status == CallerTrustStatus.VERIFIED_BUSINESS ||
+                    callerReport.status == CallerTrustStatus.SENSITIVE_PROTECTED ||
+                    callerReport.status == CallerTrustStatus.BLOCKED ||
+                    (showCallerIdBadge && callerReport.status == CallerTrustStatus.UNKNOWN_CLEAN)
 
                 if (showSpecialStatusBadge) {
                     val chipColor = when (callerReport.status) {
                         CallerTrustStatus.FRAUD_WARNING, CallerTrustStatus.BLOCKED -> CallMissedRed
-                        CallerTrustStatus.SPAM_SUSPECTED -> Color(0xFFD97706)
-                        CallerTrustStatus.VERIFIED_BUSINESS -> Color(0xFF15803D)
-                        CallerTrustStatus.SENSITIVE_PROTECTED -> Color(0xFF4F46E5)
+                        CallerTrustStatus.SPAM_SUSPECTED -> AmberWarnColor
+                        CallerTrustStatus.VERIFIED_BUSINESS -> EmeraldTextColor
+                        CallerTrustStatus.SENSITIVE_PROTECTED -> IndigoPrivacyColor
                         else -> Color(0xFF0284C7)
                     }
                     val badgeLabel = if (callerReport.status == CallerTrustStatus.UNKNOWN_CLEAN) {
@@ -898,21 +949,18 @@ private fun GroupedRecentCardContent(
                     } else {
                         callerReport.statusBadge
                     }
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = chipColor.copy(alpha = 0.12f),
-                        modifier = Modifier.padding(top = 4.dp)
-                    ) {
-                        Text(
-                            text = badgeLabel,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = chipColor,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                        )
-                    }
+                    Text(
+                        text = badgeLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = chipColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .background(chipColor.copy(alpha = 0.12f), RecentPillShape)
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
                 }
 
                 if (!savedNote.isNullOrBlank() && !callerReport.isSensitiveMasked) {
@@ -928,48 +976,47 @@ private fun GroupedRecentCardContent(
             }
 
             Spacer(Modifier.width(6.dp))
-            Surface(
-                shape = CircleShape,
-                color = Color(0xFF16A34A).copy(alpha = 0.13f),
+            Box(
+                contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(38.dp)
+                    .background(Sim1BadgeColor.copy(alpha = 0.13f), CircleShape)
                     .clip(CircleShape)
                     .clickable(onClick = onQuickCall)
                     .testTag("recent_call_button_${group.groupKey}")
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Rounded.Call,
-                        contentDescription = strings.callButton,
-                        tint = Color(0xFF15803D),
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Rounded.Call,
+                    contentDescription = strings.callButton,
+                    tint = EmeraldTextColor,
+                    modifier = Modifier.size(18.dp)
+                )
             }
 
             Box {
-                    IconButton(
-                        onClick = { menuExpanded = true },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .testTag("recent_more_button_${group.groupKey}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MoreVert,
-                            contentDescription = "More options",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier
+                        .size(36.dp)
+                        .testTag("recent_more_button_${group.groupKey}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.MoreVert,
+                        contentDescription = "More options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
 
+                if (menuExpanded) {
                     DropdownMenu(
-                        expanded = menuExpanded,
+                        expanded = true,
                         onDismissRequest = { menuExpanded = false }
                     ) {
                         DropdownMenuItem(
                             text = { Text(strings.contactProfile) },
                             leadingIcon = {
-                                Icon(Icons.Rounded.Person, contentDescription = null, tint = Color(0xFF16A34A))
+                                Icon(Icons.Rounded.Person, contentDescription = null, tint = Sim1BadgeColor)
                             },
                             onClick = {
                                 menuExpanded = false
@@ -989,7 +1036,7 @@ private fun GroupedRecentCardContent(
                         DropdownMenuItem(
                             text = { Text(strings.tagCallerId) },
                             leadingIcon = {
-                                Icon(Icons.Rounded.VerifiedUser, contentDescription = null, tint = Color(0xFF2563EB))
+                                Icon(Icons.Rounded.VerifiedUser, contentDescription = null, tint = Sim2BadgeColor)
                             },
                             onClick = {
                                 menuExpanded = false
@@ -1009,7 +1056,7 @@ private fun GroupedRecentCardContent(
                         DropdownMenuItem(
                             text = { Text(strings.reportNumberTitle) },
                             leadingIcon = {
-                                Icon(Icons.Rounded.ReportProblem, contentDescription = null, tint = Color(0xFFD97706))
+                                Icon(Icons.Rounded.ReportProblem, contentDescription = null, tint = AmberWarnColor)
                             },
                             onClick = {
                                 menuExpanded = false
@@ -1047,6 +1094,7 @@ private fun GroupedRecentCardContent(
             }
         }
     }
+}
 
 @Composable
 private fun GroupedHistoryDetailSheet(
@@ -1277,16 +1325,18 @@ private fun CallerAvatar(
     photoUri: String?,
     size: Dp
 ) {
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
-        modifier = Modifier.size(size)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(size)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f), CircleShape)
+            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f), CircleShape)
+            .clip(CircleShape)
     ) {
         if (!photoUri.isNullOrBlank()) {
             val context = LocalContext.current
             val request = remember(photoUri) {
-                ImageRequest.Builder(context).data(photoUri).size(128).crossfade(false).build()
+                ImageRequest.Builder(context).data(photoUri).size(112).crossfade(false).build()
             }
             AsyncImage(
                 model = request,
@@ -1295,14 +1345,12 @@ private fun CallerAvatar(
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = title.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
+            Text(
+                text = title.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }
