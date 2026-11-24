@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.data.model.AppLanguage
 import com.example.data.model.BlockedNumberEntry
 import com.example.data.model.CallDirection
 import com.example.data.model.CallLogItem
@@ -8,6 +9,7 @@ import com.example.data.model.CommunitySpamReport
 import com.example.data.model.ContactItem
 import com.example.data.model.DialerSettings
 import com.example.data.model.DoodleDesign
+import com.example.data.model.DualSimMode
 import com.example.data.model.PrivateContactEntry
 import com.example.data.model.SpamCategory
 import com.example.data.preferences.SettingsDataStore
@@ -273,5 +275,38 @@ class DialerLogicTest {
         assertEquals(sample[0], parsed[0])
         assertEquals(sample[1], parsed[1])
         assertTrue(SettingsDataStore.parseCallLogsCache("").isEmpty())
+    }
+
+    @Test
+    fun `settingsDataStore fastSettings preserves selected theme, language, and security flags`() {
+        val custom = DialerSettings(
+            selectedThemeId = "pure_black",
+            selectedDoodle = DoodleDesign.ROYAL_MANDALA,
+            customThemeImagePath = "/data/user/0/custom\tphoto.jpg",
+            overlayDimAlpha = 0.65f,
+            dtmfTonesEnabled = false,
+            hapticFeedbackEnabled = false,
+            dualSimMode = DualSimMode.DUAL_BUTTONS,
+            autoCleanPastedNumber = false,
+            language = AppLanguage.BENGALI,
+            displayScale = 1.05f,
+            fontScale = 1.15f,
+            sim1RingtoneUri = "content://ring/1",
+            sim1RingtoneName = "Classic Ring",
+            sim2RingtoneUri = null,
+            sim2RingtoneName = null,
+            callerIdEnabled = true,
+            spamDetectionEnabled = false,
+            fraudWarningEnabled = true,
+            autoSpamCategoryEnabled = false,
+            appLockEnabled = true,
+            pinProtectedSettingsEnabled = true,
+            sensitiveContactProtectionEnabled = true,
+            hasSecurityPin = true
+        )
+        val encoded = SettingsDataStore.serializeFastSettings(custom)
+        val decoded = SettingsDataStore.parseFastSettings(encoded)
+        assertEquals(custom, decoded)
+        assertEquals(DialerSettings(), SettingsDataStore.parseFastSettings(""))
     }
 }

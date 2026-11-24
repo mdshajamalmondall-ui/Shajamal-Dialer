@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -86,7 +87,9 @@ class SettingsDataStore(private val context: Context) {
         val SIM2_BALANCE_TS = longPreferencesKey("sim2_balance_ts")
     }
 
-    val settingsFlow: Flow<DialerSettings> = context.settingsDataStore.data.map { prefs ->
+    val settingsFlow: Flow<DialerSettings> = context.settingsDataStore.data.map(::preferencesToSettings)
+
+    private fun preferencesToSettings(prefs: Preferences): DialerSettings {
         val modeName = prefs[Keys.DUAL_SIM_MODE] ?: DualSimMode.ASK_ON_CALL.name
         val dualSimMode = runCatching { DualSimMode.valueOf(modeName) }
             .getOrDefault(DualSimMode.ASK_ON_CALL)
@@ -98,7 +101,7 @@ class SettingsDataStore(private val context: Context) {
         val hasPin = !prefs[Keys.SECURITY_PIN_HASH].isNullOrBlank() &&
             !prefs[Keys.SECURITY_PIN_SALT].isNullOrBlank()
 
-        DialerSettings(
+        return DialerSettings(
             selectedThemeId = prefs[Keys.SELECTED_THEME_ID] ?: ThemeCatalog.ID_PURE_WHITE,
             selectedDoodle = DoodleDesign.fromId(prefs[Keys.SELECTED_DOODLE_ID]),
             customThemeImagePath = prefs[Keys.CUSTOM_THEME_IMAGE_PATH],
@@ -123,6 +126,14 @@ class SettingsDataStore(private val context: Context) {
             sensitiveContactProtectionEnabled = prefs[Keys.SENSITIVE_PROTECTION_ENABLED] ?: false,
             hasSecurityPin = hasPin
         )
+    }
+
+    private suspend fun editAndSyncSettings(transform: (MutablePreferences) -> Unit) {
+        val updated = context.settingsDataStore.edit(transform)
+        val snapshot = preferencesToSettings(updated)
+        fastPrefs.edit()
+            .putString("fast_settings_v1", serializeFastSettings(snapshot))
+            .apply()
     }
 
     val communityReportsFlow: Flow<Map<String, CommunitySpamReport>> = context.settingsDataStore.data.map { prefs ->
@@ -186,13 +197,13 @@ class SettingsDataStore(private val context: Context) {
     }
 
     suspend fun selectTheme(themeId: String) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.SELECTED_THEME_ID] = themeId
         }
     }
 
     suspend fun selectDoodle(doodle: DoodleDesign) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.SELECTED_DOODLE_ID] = doodle.id
         }
     }
@@ -210,7 +221,7 @@ class SettingsDataStore(private val context: Context) {
                 }
             } ?: return@withContext null
 
-            context.settingsDataStore.edit { prefs ->
+            editAndSyncSettings { prefs ->
                 prefs[Keys.CUSTOM_THEME_IMAGE_PATH] = targetFile.absolutePath
                 prefs[Keys.SELECTED_THEME_ID] = ThemeCatalog.ID_CUSTOM_PHOTO
             }
@@ -232,7 +243,7 @@ class SettingsDataStore(private val context: Context) {
         }
 
         val displayName = resolveAudioDisplayName(uri)
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             if (slotIndex == 0) {
                 prefs[Keys.SIM1_RINGTONE_URI] = uri.toString()
                 prefs[Keys.SIM1_RINGTONE_NAME] = displayName
@@ -248,7 +259,7 @@ class SettingsDataStore(private val context: Context) {
     }
 
     suspend fun clearSimRingtone(slotIndex: Int) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             if (slotIndex == 0) {
                 prefs.remove(Keys.SIM1_RINGTONE_URI)
                 prefs.remove(Keys.SIM1_RINGTONE_NAME)
@@ -279,80 +290,80 @@ class SettingsDataStore(private val context: Context) {
     }
 
     suspend fun setOverlayDimAlpha(alpha: Float) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.OVERLAY_DIM_ALPHA] = alpha.coerceIn(0.15f, 0.88f)
         }
     }
 
     suspend fun setDtmfTonesEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.DTMF_TONES_ENABLED] = enabled
         }
     }
 
     suspend fun setHapticFeedbackEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.HAPTIC_FEEDBACK_ENABLED] = enabled
         }
     }
 
     suspend fun setDualSimMode(mode: DualSimMode) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.DUAL_SIM_MODE] = mode.name
         }
     }
 
     suspend fun setAutoCleanPastedNumber(enabled: Boolean) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.AUTO_CLEAN_PASTED_NUMBER] = enabled
         }
     }
 
     suspend fun setLanguage(language: AppLanguage) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.APP_LANGUAGE] = language.name
         }
         fastPrefs.edit().putString("language", language.name).apply()
     }
 
     suspend fun setDisplayScale(scale: Float) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.DISPLAY_SCALE] = scale.coerceIn(0.85f, 1.20f)
         }
     }
 
     suspend fun setFontScale(scale: Float) {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.FONT_SCALE] = scale.coerceIn(0.85f, 1.35f)
         }
     }
 
     suspend fun setCallerIdEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.CALLER_ID_ENABLED] = enabled }
+        editAndSyncSettings { it[Keys.CALLER_ID_ENABLED] = enabled }
     }
 
     suspend fun setSpamDetectionEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.SPAM_DETECTION_ENABLED] = enabled }
+        editAndSyncSettings { it[Keys.SPAM_DETECTION_ENABLED] = enabled }
     }
 
     suspend fun setFraudWarningEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.FRAUD_WARNING_ENABLED] = enabled }
+        editAndSyncSettings { it[Keys.FRAUD_WARNING_ENABLED] = enabled }
     }
 
     suspend fun setAutoSpamCategoryEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.AUTO_SPAM_CATEGORY_ENABLED] = enabled }
+        editAndSyncSettings { it[Keys.AUTO_SPAM_CATEGORY_ENABLED] = enabled }
     }
 
     suspend fun setAppLockEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.APP_LOCK_ENABLED] = enabled }
+        editAndSyncSettings { it[Keys.APP_LOCK_ENABLED] = enabled }
     }
 
     suspend fun setPinProtectedSettingsEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.PIN_PROTECTED_SETTINGS_ENABLED] = enabled }
+        editAndSyncSettings { it[Keys.PIN_PROTECTED_SETTINGS_ENABLED] = enabled }
     }
 
     suspend fun setSensitiveContactProtectionEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.SENSITIVE_PROTECTION_ENABLED] = enabled }
+        editAndSyncSettings { it[Keys.SENSITIVE_PROTECTION_ENABLED] = enabled }
         fastPrefs.edit().putBoolean("sensitive_protection", enabled).apply()
     }
 
@@ -361,7 +372,7 @@ class SettingsDataStore(private val context: Context) {
         if (clean.length < 4) return
         val salt = SecurityCryptoManager.generateSaltBase64()
         val hash = SecurityCryptoManager.hashPin(clean, salt)
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs[Keys.SECURITY_PIN_SALT] = salt
             prefs[Keys.SECURITY_PIN_HASH] = hash
         }
@@ -375,7 +386,7 @@ class SettingsDataStore(private val context: Context) {
     }
 
     suspend fun clearSecurityPin() {
-        context.settingsDataStore.edit { prefs ->
+        editAndSyncSettings { prefs ->
             prefs.remove(Keys.SECURITY_PIN_SALT)
             prefs.remove(Keys.SECURITY_PIN_HASH)
             prefs[Keys.APP_LOCK_ENABLED] = false
@@ -496,6 +507,11 @@ class SettingsDataStore(private val context: Context) {
 
     fun isSensitiveProtectionFast(): Boolean = fastPrefs.getBoolean("sensitive_protection", false)
 
+    fun getFastSettings(): DialerSettings {
+        val raw = fastPrefs.getString("fast_settings_v1", null).orEmpty()
+        return parseFastSettings(raw)
+    }
+
     fun getCachedCallLogsFast(): List<CallLogItem> {
         val raw = fastPrefs.getString("cached_recent_calls_v2", null).orEmpty()
         return parseCallLogsCache(raw)
@@ -538,8 +554,10 @@ class SettingsDataStore(private val context: Context) {
         val blockedKeys = prefs[Keys.BLOCKED_NUMBERS].orEmpty().mapNotNull {
             PhoneNumberInfoHelper.canonicalKey(it.substringBefore('|')).takeIf { k -> k.isNotBlank() }
         }.toSet()
+        val settingsSnapshot = preferencesToSettings(prefs)
         fastPrefs.edit()
             .putBoolean("cache_seeded", true)
+            .putString("fast_settings_v1", serializeFastSettings(settingsSnapshot))
             .putStringSet("blocked_keys", blockedKeys)
             .putString("sim1_ringtone_uri", prefs[Keys.SIM1_RINGTONE_URI])
             .putString("sim2_ringtone_uri", prefs[Keys.SIM2_RINGTONE_URI])
@@ -693,6 +711,66 @@ class SettingsDataStore(private val context: Context) {
                     )
                 }.toList()
             }.getOrDefault(emptyList())
+        }
+
+        fun serializeFastSettings(s: DialerSettings): String = listOf(
+            encodeField(s.selectedThemeId),
+            encodeField(s.selectedDoodle.id),
+            encodeField(s.customThemeImagePath.orEmpty()),
+            s.overlayDimAlpha.toString(),
+            s.dtmfTonesEnabled.toString(),
+            s.hapticFeedbackEnabled.toString(),
+            s.dualSimMode.name,
+            s.autoCleanPastedNumber.toString(),
+            s.language.name,
+            s.displayScale.toString(),
+            s.fontScale.toString(),
+            encodeField(s.sim1RingtoneUri.orEmpty()),
+            encodeField(s.sim1RingtoneName.orEmpty()),
+            encodeField(s.sim2RingtoneUri.orEmpty()),
+            encodeField(s.sim2RingtoneName.orEmpty()),
+            s.callerIdEnabled.toString(),
+            s.spamDetectionEnabled.toString(),
+            s.fraudWarningEnabled.toString(),
+            s.autoSpamCategoryEnabled.toString(),
+            s.appLockEnabled.toString(),
+            s.pinProtectedSettingsEnabled.toString(),
+            s.sensitiveContactProtectionEnabled.toString(),
+            s.hasSecurityPin.toString()
+        ).joinToString(separator = "\t")
+
+        fun parseFastSettings(raw: String): DialerSettings {
+            if (raw.isBlank()) return DialerSettings()
+            return runCatching {
+                val p = raw.split('\t')
+                if (p.size < 23) return DialerSettings()
+                val hasPin = p[22].toBooleanStrictOrNull() ?: false
+                DialerSettings(
+                    selectedThemeId = decodeField(p[0]).ifBlank { ThemeCatalog.ID_PURE_WHITE },
+                    selectedDoodle = DoodleDesign.fromId(decodeField(p[1])),
+                    customThemeImagePath = decodeField(p[2]).takeIf { it.isNotBlank() },
+                    overlayDimAlpha = (p[3].toFloatOrNull() ?: 0.52f).coerceIn(0.15f, 0.88f),
+                    dtmfTonesEnabled = p[4].toBooleanStrictOrNull() ?: true,
+                    hapticFeedbackEnabled = p[5].toBooleanStrictOrNull() ?: true,
+                    dualSimMode = runCatching { DualSimMode.valueOf(p[6]) }.getOrDefault(DualSimMode.ASK_ON_CALL),
+                    autoCleanPastedNumber = p[7].toBooleanStrictOrNull() ?: true,
+                    language = runCatching { AppLanguage.valueOf(p[8]) }.getOrDefault(AppLanguage.ENGLISH),
+                    displayScale = (p[9].toFloatOrNull() ?: 1.0f).coerceIn(0.85f, 1.20f),
+                    fontScale = (p[10].toFloatOrNull() ?: 1.0f).coerceIn(0.85f, 1.35f),
+                    sim1RingtoneUri = decodeField(p[11]).takeIf { it.isNotBlank() },
+                    sim1RingtoneName = decodeField(p[12]).takeIf { it.isNotBlank() },
+                    sim2RingtoneUri = decodeField(p[13]).takeIf { it.isNotBlank() },
+                    sim2RingtoneName = decodeField(p[14]).takeIf { it.isNotBlank() },
+                    callerIdEnabled = p[15].toBooleanStrictOrNull() ?: true,
+                    spamDetectionEnabled = p[16].toBooleanStrictOrNull() ?: true,
+                    fraudWarningEnabled = p[17].toBooleanStrictOrNull() ?: true,
+                    autoSpamCategoryEnabled = p[18].toBooleanStrictOrNull() ?: true,
+                    appLockEnabled = hasPin && (p[19].toBooleanStrictOrNull() ?: false),
+                    pinProtectedSettingsEnabled = hasPin && (p[20].toBooleanStrictOrNull() ?: false),
+                    sensitiveContactProtectionEnabled = p[21].toBooleanStrictOrNull() ?: false,
+                    hasSecurityPin = hasPin
+                )
+            }.getOrDefault(DialerSettings())
         }
     }
 }

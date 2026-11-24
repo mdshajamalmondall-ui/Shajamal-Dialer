@@ -39,24 +39,37 @@ class DeviceDirectoryRepository(
                 CallLog.Calls.PHONE_ACCOUNT_ID
             )
 
+            val limitedUri = CallLog.Calls.CONTENT_URI.buildUpon()
+                .appendQueryParameter(CallLog.Calls.LIMIT_PARAM_KEY, limit.coerceAtLeast(1).toString())
+                .build()
+
             runCatching {
-                context.contentResolver.query(
+                val cursor = runCatching {
+                    context.contentResolver.query(
+                        limitedUri,
+                        projection,
+                        null,
+                        null,
+                        "${CallLog.Calls.DATE} DESC"
+                    )
+                }.getOrNull() ?: context.contentResolver.query(
                     CallLog.Calls.CONTENT_URI,
                     projection,
                     null,
                     null,
                     "${CallLog.Calls.DATE} DESC"
-                )?.use { cursor ->
-                    val idIdx = cursor.getColumnIndexOrThrow(CallLog.Calls._ID)
-                    val numIdx = cursor.getColumnIndexOrThrow(CallLog.Calls.NUMBER)
-                    val nameIdx = cursor.getColumnIndexOrThrow(CallLog.Calls.CACHED_NAME)
-                    val typeIdx = cursor.getColumnIndexOrThrow(CallLog.Calls.TYPE)
-                    val dateIdx = cursor.getColumnIndexOrThrow(CallLog.Calls.DATE)
-                    val durIdx = cursor.getColumnIndexOrThrow(CallLog.Calls.DURATION)
-                    val accIdx = cursor.getColumnIndexOrThrow(CallLog.Calls.PHONE_ACCOUNT_ID)
+                )
+                cursor?.use { c ->
+                    val idIdx = c.getColumnIndexOrThrow(CallLog.Calls._ID)
+                    val numIdx = c.getColumnIndexOrThrow(CallLog.Calls.NUMBER)
+                    val nameIdx = c.getColumnIndexOrThrow(CallLog.Calls.CACHED_NAME)
+                    val typeIdx = c.getColumnIndexOrThrow(CallLog.Calls.TYPE)
+                    val dateIdx = c.getColumnIndexOrThrow(CallLog.Calls.DATE)
+                    val durIdx = c.getColumnIndexOrThrow(CallLog.Calls.DURATION)
+                    val accIdx = c.getColumnIndexOrThrow(CallLog.Calls.PHONE_ACCOUNT_ID)
 
-                    while (cursor.moveToNext() && items.size < limit) {
-                        val typeInt = cursor.getInt(typeIdx)
+                    while (c.moveToNext() && items.size < limit) {
+                        val typeInt = c.getInt(typeIdx)
                         val direction = when (typeInt) {
                             CallLog.Calls.INCOMING_TYPE -> CallDirection.INCOMING
                             CallLog.Calls.OUTGOING_TYPE -> CallDirection.OUTGOING
@@ -66,15 +79,15 @@ class DeviceDirectoryRepository(
                             CallLog.Calls.BLOCKED_TYPE -> CallDirection.BLOCKED
                             else -> CallDirection.INCOMING
                         }
-                        val accountId = cursor.getString(accIdx)
+                        val accountId = c.getString(accIdx)
                         items.add(
                             CallLogItem(
-                                id = cursor.getLong(idIdx),
-                                number = cursor.getString(numIdx).orEmpty(),
-                                cachedName = cursor.getString(nameIdx),
+                                id = c.getLong(idIdx),
+                                number = c.getString(numIdx).orEmpty(),
+                                cachedName = c.getString(nameIdx),
                                 direction = direction,
-                                dateMillis = cursor.getLong(dateIdx),
-                                durationSeconds = cursor.getLong(durIdx),
+                                dateMillis = c.getLong(dateIdx),
+                                durationSeconds = c.getLong(durIdx),
                                 phoneAccountId = accountId,
                                 simSlotIndex = dualSimCallManager.resolveSimSlotForAccountId(accountId, slots)
                             )

@@ -2,6 +2,7 @@ package com.example
 
 import android.Manifest
 import android.content.Intent
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -12,9 +13,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -50,13 +50,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -89,16 +94,24 @@ import com.example.ui.theme.ThemeCatalog
 class MainActivity : ComponentActivity() {
 
     private val viewModel: ShajamalViewModel by viewModels()
+    private val _launchNavigationTarget = MutableStateFlow<Pair<String, Long>?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val initialTheme = ThemeCatalog.byId(viewModel.settings.value.selectedThemeId)
+        window.setBackgroundDrawable(ColorDrawable(initialTheme.colorScheme.background.toArgb()))
         enableEdgeToEdge()
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = initialTheme.isLight
+            isAppearanceLightNavigationBars = initialTheme.isLight
+        }
         val openedFromTelIntent = handleIncomingDialIntent(intent)
 
         setContent {
             ShajamalApp(
                 viewModel = viewModel,
-                initialRoute = if (openedFromTelIntent) ShajamalRoutes.KEYPAD else ShajamalRoutes.RECENTS
+                initialRoute = if (openedFromTelIntent) ShajamalRoutes.KEYPAD else ShajamalRoutes.RECENTS,
+                launchNavigationTargetFlow = _launchNavigationTarget.asStateFlow()
             )
         }
     }
@@ -106,7 +119,11 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIncomingDialIntent(intent)
+        if (handleIncomingDialIntent(intent)) {
+            _launchNavigationTarget.value = ShajamalRoutes.KEYPAD to System.nanoTime()
+        } else if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            _launchNavigationTarget.value = ShajamalRoutes.RECENTS to System.nanoTime()
+        }
     }
 
     private fun handleIncomingDialIntent(intent: Intent?): Boolean {
@@ -136,7 +153,8 @@ private data class NavDestinationItem(
 @Composable
 private fun ShajamalApp(
     viewModel: ShajamalViewModel,
-    initialRoute: String = ShajamalRoutes.RECENTS
+    initialRoute: String = ShajamalRoutes.RECENTS,
+    launchNavigationTargetFlow: StateFlow<Pair<String, Long>?>
 ) {
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -144,11 +162,12 @@ private fun ShajamalApp(
     val isSettingsLockRequired by viewModel.isSettingsLockRequired.collectAsStateWithLifecycle()
     val simSlots by viewModel.simSlots.collectAsStateWithLifecycle()
     val simPickerNumber by viewModel.simPickerNumber.collectAsStateWithLifecycle()
+    val launchNavigationTarget by launchNavigationTargetFlow.collectAsStateWithLifecycle()
 
     val activeTheme = ThemeCatalog.byId(settings.selectedThemeId)
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route ?: ShajamalRoutes.KEYPAD
+    val currentRoute = navBackStackEntry?.destination?.route ?: initialRoute
     val snackbarHostState = remember { SnackbarHostState() }
 
     val requiredPermissions = remember {
@@ -203,6 +222,13 @@ private fun ShajamalApp(
             }
             launchSingleTop = true
             restoreState = true
+        }
+    }
+
+    LaunchedEffect(launchNavigationTarget) {
+        val target = launchNavigationTarget?.first ?: return@LaunchedEffect
+        if (navController.currentDestination?.route != target) {
+            navigateTopLevel(target)
         }
     }
 
@@ -374,10 +400,10 @@ private fun ShajamalApp(
                             NavHost(
                                 navController = navController,
                                 startDestination = initialRoute,
-                                enterTransition = { fadeIn(animationSpec = tween(120)) },
-                                exitTransition = { fadeOut(animationSpec = tween(80)) },
-                                popEnterTransition = { fadeIn(animationSpec = tween(120)) },
-                                popExitTransition = { fadeOut(animationSpec = tween(80)) }
+                                enterTransition = { EnterTransition.None },
+                                exitTransition = { ExitTransition.None },
+                                popEnterTransition = { EnterTransition.None },
+                                popExitTransition = { ExitTransition.None }
                             ) {
                                 composable(ShajamalRoutes.RECENTS) {
                                     val groupedCallLogs by viewModel.groupedCallLogs.collectAsStateWithLifecycle()

@@ -44,6 +44,7 @@ import com.example.data.telephony.SimBalanceManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -78,10 +79,12 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
     private val simBalanceManager = SimBalanceManager(context)
     private val directoryRepository = DeviceDirectoryRepository(context, dualSimCallManager)
 
+    private val initialSettings: DialerSettings = settingsDataStore.getFastSettings()
+
     val settings: StateFlow<DialerSettings> = settingsDataStore.settingsFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = DialerSettings()
+        started = SharingStarted.Eagerly,
+        initialValue = initialSettings
     )
 
     val blockedNumbers: StateFlow<List<BlockedNumberEntry>> = settingsDataStore.blockedNumbersFlow.stateIn(
@@ -126,7 +129,11 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
         _appUnlockedThisSession
     ) { currentSettings, unlocked ->
         currentSettings.appLockEnabled && currentSettings.hasSecurityPin && !unlocked
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = initialSettings.appLockEnabled && initialSettings.hasSecurityPin
+    )
 
     private val _settingsUnlocked = MutableStateFlow(false)
     val isSettingsLockRequired: StateFlow<Boolean> = combine(
@@ -450,55 +457,64 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             launch(Dispatchers.IO) { runCatching { settingsDataStore.syncFastCallCache() } }
 
-            val (snapshot, defaultDialer, slots) = withContext(Dispatchers.IO) {
-                val canFullScreen = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() ?: true
-                } else {
-                    true
-                }
-                val permSnapshot = readPermissionSnapshotSync(canFullScreen)
-                Triple(
-                    permSnapshot,
-                    dualSimCallManager.isDefaultDialer(),
-                    dualSimCallManager.loadSimSlots()
-                )
-            }
-
-            _permissions.value = snapshot
-            _isDefaultDialer.value = defaultDialer
-            _simSlots.value = slots
-
             var freshLogs: List<CallLogItem> = emptyList()
             var freshContacts: List<ContactItem> = emptyList()
+            var resolvedSnapshot = _permissions.value
+            var resolvedSlots: List<SimSlotInfo> = emptyList()
 
             coroutineScope {
-                val logsDeferred = async {
-                    directoryRepository.loadCallLogs(slots, limit = 300).also { loaded ->
-                        freshLogs = loaded
-                        _allCallLogs.value = loaded
-                        _callLogsFetchedOnce.value = true
+                val permDeferred = async(Dispatchers.IO) {
+                    val canFullScreen = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() ?: true
+                    } else {
+                        true
+                    }
+                    readPermissionSnapshotSync(canFullScreen) to dualSimCallManager.isDefaultDialer()
+                }
+                val slotsDeferred = async(Dispatchers.IO) {
+                    dualSimCallManager.loadSimSlots()
+                }
+                val rawLogsDeferred = async(Dispatchers.IO) {
+                    directoryRepository.loadCallLogs(emptyList(), limit = 120)
+                }
+                val contactsDeferred = async(Dispatchers.IO) {
+                    directoryRepository.loadContacts()
+                }
+
+                val (permSnapshot, defaultDialer) = permDeferred.await()
+                resolvedSnapshot = permSnapshot
+                if (permSnapshot != _permissions.value) {
+                    _permissions.value = permSnapshot
+                }
+                _isDefaultDialer.value = defaultDialer
+
+                resolvedSlots = slotsDeferred.await()
+                _simSlots.value = resolvedSlots
+
+                val rawLogs = rawLogsDeferred.await()
+                freshLogs = withContext(Dispatchers.Default) {
+                    rawLogs.map { item ->
+                        val slot = dualSimCallManager.resolveSimSlotForAccountId(item.phoneAccountId, resolvedSlots)
+                        if (slot != item.simSlotIndex) item.copy(simSlotIndex = slot) else item
                     }
                 }
-                val contactsDeferred = async {
-                    directoryRepository.loadContacts().also { loaded ->
-                        freshContacts = loaded
-                        _allContacts.value = loaded
-                        _contactsFetchedOnce.value = true
-                    }
-                }
-                logsDeferred.await()
-                contactsDeferred.await()
+                _allCallLogs.value = freshLogs
+                _callLogsFetchedOnce.value = true
+
+                freshContacts = contactsDeferred.await()
+                _allContacts.value = freshContacts
+                _contactsFetchedOnce.value = true
             }
 
-            if (snapshot.readCallLog) {
+            if (resolvedSnapshot.readCallLog) {
                 launch(Dispatchers.IO) {
                     runCatching { settingsDataStore.cacheRecentCallLogs(freshLogs, freshContacts) }
                 }
             }
 
-            if (!autoCheckedBalanceThisSession && snapshot.hasCoreDialerPermissions) {
+            if (!autoCheckedBalanceThisSession && resolvedSnapshot.hasCoreDialerPermissions) {
                 autoCheckedBalanceThisSession = true
-                autoRefreshStaleSimBalances(slots)
+                autoRefreshStaleSimBalances(resolvedSlots)
             }
         }
     }
@@ -522,6 +538,7 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
 
     private fun autoRefreshStaleSimBalances(slots: List<SimSlotInfo>) {
         viewModelScope.launch {
+            delay(2500L)
             val storedMap = settingsDataStore.simBalancesFlow.first()
             val now = System.currentTimeMillis()
             val staleThresholdMs = 30L * 60L * 1000L
