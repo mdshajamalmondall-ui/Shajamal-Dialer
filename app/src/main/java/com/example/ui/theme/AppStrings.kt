@@ -213,7 +213,9 @@ data class AppStrings(
     val checkingBalanceLabel: String,
     val dialUssdButton: String,
     val ussdCodeLabel: String,
-    val balanceNotCheckedYet: String
+    val balanceNotCheckedYet: String,
+    val fullScreenCallsButton: String,
+    val fullScreenCallsBanner: String
 )
 
 val EnglishStrings = AppStrings(
@@ -426,7 +428,9 @@ val EnglishStrings = AppStrings(
     checkingBalanceLabel = "Checking...",
     dialUssdButton = "Dial USSD",
     ussdCodeLabel = "Balance USSD Code",
-    balanceNotCheckedYet = "Tap Check Balance to fetch live amount"
+    balanceNotCheckedYet = "Tap Check Balance to fetch live amount",
+    fullScreenCallsButton = "Allow Full-Screen Calls",
+    fullScreenCallsBanner = "Enable Full-Screen Calls so calls appear when app is closed"
 )
 
 val BengaliStrings = AppStrings(
@@ -639,7 +643,9 @@ val BengaliStrings = AppStrings(
     checkingBalanceLabel = "চেক হচ্ছে...",
     dialUssdButton = "ডায়াল USSD",
     ussdCodeLabel = "ব্যালেন্স USSD কোড",
-    balanceNotCheckedYet = "লাইভ ব্যালেন্স দেখতে ব্যালেন্স চেক চাপুন"
+    balanceNotCheckedYet = "লাইভ ব্যালেন্স দেখতে ব্যালেন্স চেক চাপুন",
+    fullScreenCallsButton = "ফুল-স্ক্রিন কল চালু করুন",
+    fullScreenCallsBanner = "অ্যাপ বন্ধ থাকা অবস্থায় কল পেতে ফুল-স্ক্রিন কল অনুমতি দিন"
 )
 
 fun stringsFor(language: AppLanguage): AppStrings =

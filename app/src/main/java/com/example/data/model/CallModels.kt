@@ -203,7 +203,8 @@ data class PermissionSnapshot(
     val writeCallLog: Boolean = false,
     val readContacts: Boolean = false,
     val writeContacts: Boolean = false,
-    val postNotifications: Boolean = true
+    val postNotifications: Boolean = true,
+    val canUseFullScreenIntent: Boolean = true
 ) {
     val hasCoreDialerPermissions: Boolean
         get() = callPhone && readPhoneState

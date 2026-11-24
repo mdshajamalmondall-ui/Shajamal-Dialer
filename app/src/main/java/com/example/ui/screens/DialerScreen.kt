@@ -121,6 +121,7 @@ fun DialerScreen(
     onRequestPermissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onRequestDefaultDialer: () -> Unit,
+    onRequestFullScreenIntent: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -260,7 +261,7 @@ fun DialerScreen(
                         }
                     }
 
-                    if (!permissions.hasCoreDialerPermissions) {
+                    if (!permissions.hasCoreDialerPermissions || !permissions.postNotifications) {
                         Surface(
                             shape = RoundedCornerShape(14.dp),
                             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
@@ -287,6 +288,36 @@ fun DialerScreen(
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    } else if (!permissions.canUseFullScreenIntent) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.92f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable(onClick = onRequestFullScreenIntent)
+                                .testTag("grant_full_screen_calls_banner")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = strings.fullScreenCallsBanner,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = strings.allow,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
                                 )
                             }
                         }

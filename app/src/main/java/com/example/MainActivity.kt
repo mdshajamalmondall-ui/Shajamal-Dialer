@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -50,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -136,32 +138,11 @@ private fun ShajamalApp(
     viewModel: ShajamalViewModel,
     initialRoute: String = ShajamalRoutes.RECENTS
 ) {
+    val context = LocalContext.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
-    val blockedCanonicalKeys by viewModel.blockedCanonicalKeys.collectAsStateWithLifecycle()
-    val communityReports by viewModel.communityReports.collectAsStateWithLifecycle()
-    val privateContacts by viewModel.privateContacts.collectAsStateWithLifecycle()
-    val hiddenCalls by viewModel.hiddenCalls.collectAsStateWithLifecycle()
     val isAppLocked by viewModel.isAppLocked.collectAsStateWithLifecycle()
     val isSettingsLockRequired by viewModel.isSettingsLockRequired.collectAsStateWithLifecycle()
-    val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
-    val numberGroups by viewModel.numberGroups.collectAsStateWithLifecycle()
-    val activeProfileTarget by viewModel.activeProfileTarget.collectAsStateWithLifecycle()
-    val dialField by viewModel.dialField.collectAsStateWithLifecycle()
     val simSlots by viewModel.simSlots.collectAsStateWithLifecycle()
-    val simBalances by viewModel.simBalances.collectAsStateWithLifecycle()
-    val isDefaultDialer by viewModel.isDefaultDialer.collectAsStateWithLifecycle()
-    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
-    val groupedCallLogs by viewModel.groupedCallLogs.collectAsStateWithLifecycle()
-    val recentsCallerReports by viewModel.recentsCallerReports.collectAsStateWithLifecycle()
-    val todayCallCount by viewModel.todayCallCount.collectAsStateWithLifecycle()
-    val recentsSearchQuery by viewModel.recentsSearchQuery.collectAsStateWithLifecycle()
-    val callAnalytics by viewModel.callAnalytics.collectAsStateWithLifecycle()
-    val callLogFilter by viewModel.callLogFilter.collectAsStateWithLifecycle()
-    val contacts by viewModel.filteredContacts.collectAsStateWithLifecycle()
-    val favorites by viewModel.favoriteContacts.collectAsStateWithLifecycle()
-    val exactDialedContact by viewModel.exactDialedContact.collectAsStateWithLifecycle()
-    val contactSearchQuery by viewModel.contactSearchQuery.collectAsStateWithLifecycle()
     val simPickerNumber by viewModel.simPickerNumber.collectAsStateWithLifecycle()
 
     val activeTheme = ThemeCatalog.byId(settings.selectedThemeId)
@@ -233,9 +214,26 @@ private fun ShajamalApp(
         }
     }
 
-    val currentCanonical = PhoneNumberInfoHelper.canonicalKey(dialField.text)
-    val isCurrentNumberBlocked = currentCanonical.isNotBlank() && blockedNumbers.any {
-        PhoneNumberInfoHelper.canonicalKey(it.number) == currentCanonical
+    fun openFullScreenIntentSettings() {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            Intent(
+                Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                Uri.parse("package:${context.packageName}")
+            )
+        } else {
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:${context.packageName}")
+            )
+        }
+        runCatching { defaultDialerLauncher.launch(intent) }
+            .onFailure {
+                val fallback = Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:${context.packageName}")
+                )
+                runCatching { defaultDialerLauncher.launch(fallback) }
+            }
     }
 
     ShajamalTheme(
@@ -245,36 +243,38 @@ private fun ShajamalApp(
         fontScale = settings.fontScale
     ) {
         val strings = LocalAppStrings.current
-        val mainDestinations = listOf(
-            NavDestinationItem(
-                route = ShajamalRoutes.RECENTS,
-                label = strings.navRecents,
-                selectedIcon = Icons.Rounded.History,
-                unselectedIcon = Icons.Outlined.History,
-                testTag = "nav_recents"
-            ),
-            NavDestinationItem(
-                route = ShajamalRoutes.KEYPAD,
-                label = strings.navKeypad,
-                selectedIcon = Icons.Rounded.Dialpad,
-                unselectedIcon = Icons.Outlined.Dialpad,
-                testTag = "nav_keypad"
-            ),
-            NavDestinationItem(
-                route = ShajamalRoutes.CONTACTS,
-                label = strings.navContacts,
-                selectedIcon = Icons.Rounded.Contacts,
-                unselectedIcon = Icons.Outlined.Contacts,
-                testTag = "nav_contacts"
-            ),
-            NavDestinationItem(
-                route = ShajamalRoutes.FAVORITES,
-                label = strings.navFavorites,
-                selectedIcon = Icons.Rounded.Star,
-                unselectedIcon = Icons.Outlined.StarOutline,
-                testTag = "nav_favorites"
+        val mainDestinations = remember(strings) {
+            listOf(
+                NavDestinationItem(
+                    route = ShajamalRoutes.RECENTS,
+                    label = strings.navRecents,
+                    selectedIcon = Icons.Rounded.History,
+                    unselectedIcon = Icons.Outlined.History,
+                    testTag = "nav_recents"
+                ),
+                NavDestinationItem(
+                    route = ShajamalRoutes.KEYPAD,
+                    label = strings.navKeypad,
+                    selectedIcon = Icons.Rounded.Dialpad,
+                    unselectedIcon = Icons.Outlined.Dialpad,
+                    testTag = "nav_keypad"
+                ),
+                NavDestinationItem(
+                    route = ShajamalRoutes.CONTACTS,
+                    label = strings.navContacts,
+                    selectedIcon = Icons.Rounded.Contacts,
+                    unselectedIcon = Icons.Outlined.Contacts,
+                    testTag = "nav_contacts"
+                ),
+                NavDestinationItem(
+                    route = ShajamalRoutes.FAVORITES,
+                    label = strings.navFavorites,
+                    selectedIcon = Icons.Rounded.Star,
+                    unselectedIcon = Icons.Outlined.StarOutline,
+                    testTag = "nav_favorites"
+                )
             )
-        )
+        }
 
         ThemeBackdrop(
             theme = activeTheme,
@@ -374,12 +374,26 @@ private fun ShajamalApp(
                             NavHost(
                                 navController = navController,
                                 startDestination = initialRoute,
-                                enterTransition = { fadeIn(animationSpec = tween(130)) },
-                                exitTransition = { fadeOut(animationSpec = tween(90)) },
-                                popEnterTransition = { fadeIn(animationSpec = tween(130)) },
-                                popExitTransition = { fadeOut(animationSpec = tween(90)) }
+                                enterTransition = { fadeIn(animationSpec = tween(120)) },
+                                exitTransition = { fadeOut(animationSpec = tween(80)) },
+                                popEnterTransition = { fadeIn(animationSpec = tween(120)) },
+                                popExitTransition = { fadeOut(animationSpec = tween(80)) }
                             ) {
                                 composable(ShajamalRoutes.RECENTS) {
+                                    val groupedCallLogs by viewModel.groupedCallLogs.collectAsStateWithLifecycle()
+                                    val callAnalytics by viewModel.callAnalytics.collectAsStateWithLifecycle()
+                                    val todayCallCount by viewModel.todayCallCount.collectAsStateWithLifecycle()
+                                    val callLogFilter by viewModel.callLogFilter.collectAsStateWithLifecycle()
+                                    val recentsSearchQuery by viewModel.recentsSearchQuery.collectAsStateWithLifecycle()
+                                    val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
+                                    val blockedCanonicalKeys by viewModel.blockedCanonicalKeys.collectAsStateWithLifecycle()
+                                    val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
+                                    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+                                    val communityReports by viewModel.communityReports.collectAsStateWithLifecycle()
+                                    val privateContacts by viewModel.privateContacts.collectAsStateWithLifecycle()
+                                    val simBalances by viewModel.simBalances.collectAsStateWithLifecycle()
+                                    val recentsCallerReports by viewModel.recentsCallerReports.collectAsStateWithLifecycle()
+
                                     RecentsScreen(
                                         groupedLogs = groupedCallLogs,
                                         analytics = callAnalytics,
@@ -443,6 +457,17 @@ private fun ShajamalApp(
                                 }
 
                                 composable(ShajamalRoutes.KEYPAD) {
+                                    val dialField by viewModel.dialField.collectAsStateWithLifecycle()
+                                    val exactDialedContact by viewModel.exactDialedContact.collectAsStateWithLifecycle()
+                                    val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
+                                    val blockedCanonicalKeys by viewModel.blockedCanonicalKeys.collectAsStateWithLifecycle()
+                                    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+                                    val isDefaultDialer by viewModel.isDefaultDialer.collectAsStateWithLifecycle()
+
+                                    val currentCanonical = PhoneNumberInfoHelper.canonicalKey(dialField.text)
+                                    val isCurrentNumberBlocked = currentCanonical.isNotBlank() &&
+                                        currentCanonical in blockedCanonicalKeys
+
                                     DialerScreen(
                                         dialField = dialField,
                                         simSlots = simSlots,
@@ -473,11 +498,16 @@ private fun ShajamalApp(
                                         onOpenSettings = {
                                             navController.navigate(ShajamalRoutes.SETTINGS)
                                         },
-                                        onRequestDefaultDialer = ::requestDefaultDialer
+                                        onRequestDefaultDialer = ::requestDefaultDialer,
+                                        onRequestFullScreenIntent = ::openFullScreenIntentSettings
                                     )
                                 }
 
                                 composable(ShajamalRoutes.CONTACTS) {
+                                    val contacts by viewModel.filteredContacts.collectAsStateWithLifecycle()
+                                    val contactSearchQuery by viewModel.contactSearchQuery.collectAsStateWithLifecycle()
+                                    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+
                                     ContactsScreen(
                                         contacts = contacts,
                                         searchQuery = contactSearchQuery,
@@ -513,6 +543,9 @@ private fun ShajamalApp(
                                 }
 
                                 composable(ShajamalRoutes.FAVORITES) {
+                                    val favorites by viewModel.favoriteContacts.collectAsStateWithLifecycle()
+                                    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+
                                     FavoritesScreen(
                                         favorites = favorites,
                                         permissions = permissions,
@@ -537,6 +570,10 @@ private fun ShajamalApp(
                                             onUnlocked = viewModel::unlockSettings
                                         )
                                     } else {
+                                        val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
+                                        val isDefaultDialer by viewModel.isDefaultDialer.collectAsStateWithLifecycle()
+                                        val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+
                                         SettingsScreen(
                                             settings = settings,
                                             simSlots = simSlots,
@@ -562,6 +599,7 @@ private fun ShajamalApp(
                                             onRequestPermissions = {
                                                 permissionsLauncher.launch(requiredPermissions)
                                             },
+                                            onRequestFullScreenIntent = ::openFullScreenIntentSettings,
                                             onToggleDualSimMode = viewModel::setDualSimMode,
                                             onToggleDtmfTones = viewModel::setDtmfTonesEnabled,
                                             onToggleHapticFeedback = viewModel::setHapticFeedbackEnabled,
@@ -583,6 +621,12 @@ private fun ShajamalApp(
                                             onUnlocked = viewModel::unlockSettings
                                         )
                                     } else {
+                                        val isDefaultDialer by viewModel.isDefaultDialer.collectAsStateWithLifecycle()
+                                        val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
+                                        val communityReports by viewModel.communityReports.collectAsStateWithLifecycle()
+                                        val privateContacts by viewModel.privateContacts.collectAsStateWithLifecycle()
+                                        val hiddenCalls by viewModel.hiddenCalls.collectAsStateWithLifecycle()
+
                                         PrivacyDashboardScreen(
                                             settings = settings,
                                             isDefaultDialer = isDefaultDialer,
@@ -617,6 +661,7 @@ private fun ShajamalApp(
                                 }
 
                                 composable(ShajamalRoutes.PRIVATE_CONTACTS) {
+                                    val privateContacts by viewModel.privateContacts.collectAsStateWithLifecycle()
                                     PrivateContactsScreen(
                                         privateContacts = privateContacts,
                                         onBack = { navController.popBackStack() },
@@ -628,6 +673,7 @@ private fun ShajamalApp(
                                 }
 
                                 composable(ShajamalRoutes.HIDDEN_HISTORY) {
+                                    val hiddenCalls by viewModel.hiddenCalls.collectAsStateWithLifecycle()
                                     HiddenHistoryScreen(
                                         hiddenCalls = hiddenCalls,
                                         onBack = { navController.popBackStack() },
@@ -638,6 +684,8 @@ private fun ShajamalApp(
                                 }
 
                                 composable(ShajamalRoutes.SPAM_DATABASE) {
+                                    val communityReports by viewModel.communityReports.collectAsStateWithLifecycle()
+                                    val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
                                     SpamDatabaseScreen(
                                         language = settings.language,
                                         communityReports = communityReports.values.sortedByDescending { it.reportedAtMillis },
@@ -661,6 +709,7 @@ private fun ShajamalApp(
                                 }
 
                                 composable(ShajamalRoutes.BLOCK_LIST) {
+                                    val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
                                     BlockListScreen(
                                         blockedNumbers = blockedNumbers,
                                         onAddBlockedNumber = viewModel::blockNumber,
@@ -670,6 +719,12 @@ private fun ShajamalApp(
                                 }
 
                                 composable(ShajamalRoutes.CONTACT_PROFILE) {
+                                    val activeProfileTarget by viewModel.activeProfileTarget.collectAsStateWithLifecycle()
+                                    val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
+                                    val numberGroups by viewModel.numberGroups.collectAsStateWithLifecycle()
+                                    val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
+                                    val privateContacts by viewModel.privateContacts.collectAsStateWithLifecycle()
+
                                     activeProfileTarget?.let { target ->
                                         val key = PhoneNumberInfoHelper.canonicalKey(target.number)
                                         val savedNote = if (key.isNotBlank()) numberNotes[key] else null

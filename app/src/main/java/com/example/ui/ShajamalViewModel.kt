@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.Manifest
 import android.app.Application
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -390,6 +391,11 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
 
         viewModelScope.launch {
             val (snapshot, defaultDialer, slots) = withContext(Dispatchers.IO) {
+                val canFullScreen = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() ?: true
+                } else {
+                    true
+                }
                 val permSnapshot = PermissionSnapshot(
                     callPhone = hasPermission(Manifest.permission.CALL_PHONE),
                     readPhoneState = hasPermission(Manifest.permission.READ_PHONE_STATE),
@@ -401,8 +407,10 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
                         hasPermission(Manifest.permission.POST_NOTIFICATIONS)
                     } else {
                         true
-                    }
+                    },
+                    canUseFullScreenIntent = canFullScreen
                 )
+                runCatching { settingsDataStore.syncFastCallCache() }
                 Triple(
                     permSnapshot,
                     dualSimCallManager.isDefaultDialer(),

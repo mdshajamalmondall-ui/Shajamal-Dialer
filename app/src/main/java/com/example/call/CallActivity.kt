@@ -99,6 +99,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.data.model.BlockedNumberEntry
 import com.example.data.model.CallerIdentityReport
 import com.example.data.model.CallerTrustStatus
@@ -110,7 +111,6 @@ import com.example.data.preferences.SettingsDataStore
 import com.example.data.telephony.CallerIntelligenceEngine
 import com.example.data.telephony.PhoneNumberInfoHelper
 import com.example.ui.components.CallingOrbitAnimation
-import com.example.ui.components.IncomingCallerIdCard
 import com.example.ui.components.RingingStatusPill
 import com.example.ui.components.ThemeBackdrop
 import com.example.ui.theme.CallEndRed
@@ -137,6 +137,11 @@ class CallActivity : ComponentActivity() {
                     WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
         }
+        @Suppress("DEPRECATION")
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON
+        )
         enableEdgeToEdge()
         val settingsDataStore = SettingsDataStore(applicationContext)
         val privacyVaultDataStore = PrivacyVaultDataStore(applicationContext)
@@ -154,7 +159,7 @@ class CallActivity : ComponentActivity() {
                 if (activeCall == null) {
                     delay(350)
                     if (CallRepository.activeCallState.value == null) {
-                        finish()
+                        finishAndRemoveTask()
                     }
                 }
             }
@@ -204,6 +209,11 @@ class CallActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
     }
 }
 
@@ -301,61 +311,6 @@ private fun InCallScreen(
                 )
             )
     ) {
-        if (callState.callState == Call.STATE_RINGING) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(horizontal = 20.dp, vertical = 22.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                RingingStatusPill(statusText = statusText)
-
-                IncomingCallerIdCard(
-                    report = callerReport,
-                    simLabel = callState.simLabel,
-                    onDecline = { CallRepository.rejectOrDisconnect() },
-                    onMessage = { showQuickMessageDialog = true },
-                    onAnswer = { CallRepository.answerCall() }
-                )
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 28.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IncomingActionIconLabel(
-                            icon = Icons.Rounded.Alarm,
-                            label = strings.remindMe,
-                            onClick = { showRemindDialog = true },
-                            modifier = Modifier.testTag("in_call_remind_me_button")
-                        )
-                        IncomingActionIconLabel(
-                            icon = Icons.Rounded.ChatBubble,
-                            label = strings.messageLabel,
-                            onClick = { showQuickMessageDialog = true },
-                            modifier = Modifier.testTag("in_call_message_button")
-                        )
-                    }
-
-                    SlideToAnswerBar(
-                        label = strings.slideToAnswer,
-                        onAnswer = { CallRepository.answerCall() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("in_call_slide_to_answer")
-                    )
-                }
-            }
-        } else {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -473,8 +428,15 @@ private fun InCallScreen(
                             fontWeight = FontWeight.Bold
                         )
                         if (!visiblePhotoUri.isNullOrBlank()) {
+                            val photoRequest = remember(visiblePhotoUri) {
+                                ImageRequest.Builder(context)
+                                    .data(visiblePhotoUri)
+                                    .size(360)
+                                    .crossfade(false)
+                                    .build()
+                            }
                             AsyncImage(
-                                model = visiblePhotoUri,
+                                model = photoRequest,
                                 contentDescription = visibleCallerTitle,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
@@ -699,7 +661,6 @@ private fun InCallScreen(
                     }
                 }
             }
-        }
         }
     }
 

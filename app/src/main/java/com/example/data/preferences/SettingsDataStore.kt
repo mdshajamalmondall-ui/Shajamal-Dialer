@@ -37,8 +37,12 @@ import java.io.File
 import java.io.FileOutputStream
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "shajamal_settings")
+private const val FAST_CALL_PREFS = "shajamal_fast_call_prefs"
 
 class SettingsDataStore(private val context: Context) {
+    private val fastPrefs by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        context.applicationContext.getSharedPreferences(FAST_CALL_PREFS, Context.MODE_PRIVATE)
+    }
 
     private object Keys {
         val SELECTED_THEME_ID = stringPreferencesKey("selected_theme_id")
@@ -234,6 +238,9 @@ class SettingsDataStore(private val context: Context) {
                 prefs[Keys.SIM2_RINGTONE_NAME] = displayName
             }
         }
+        fastPrefs.edit()
+            .putString(if (slotIndex == 0) "sim1_ringtone_uri" else "sim2_ringtone_uri", uri.toString())
+            .apply()
         displayName
     }
 
@@ -247,6 +254,9 @@ class SettingsDataStore(private val context: Context) {
                 prefs.remove(Keys.SIM2_RINGTONE_NAME)
             }
         }
+        fastPrefs.edit()
+            .remove(if (slotIndex == 0) "sim1_ringtone_uri" else "sim2_ringtone_uri")
+            .apply()
     }
 
     private fun resolveAudioDisplayName(uri: Uri): String {
@@ -299,6 +309,7 @@ class SettingsDataStore(private val context: Context) {
         context.settingsDataStore.edit { prefs ->
             prefs[Keys.APP_LANGUAGE] = language.name
         }
+        fastPrefs.edit().putString("language", language.name).apply()
     }
 
     suspend fun setDisplayScale(scale: Float) {
@@ -339,6 +350,7 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setSensitiveContactProtectionEnabled(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.SENSITIVE_PROTECTION_ENABLED] = enabled }
+        fastPrefs.edit().putBoolean("sensitive_protection", enabled).apply()
     }
 
     suspend fun setSecurityPin(pin: String) {
@@ -415,6 +427,7 @@ class SettingsDataStore(private val context: Context) {
         if (canonical.isBlank()) return
         val displayNum = rawNumber.trim()
         val safeLabel = label.replace("|", " ").trim()
+        var updatedCanonicalKeys: Set<String> = emptySet()
         context.settingsDataStore.edit { prefs ->
             val current = prefs[Keys.BLOCKED_NUMBERS].orEmpty().toMutableSet()
             current.removeAll { entry ->
@@ -423,12 +436,17 @@ class SettingsDataStore(private val context: Context) {
             }
             current.add("$displayNum|$safeLabel|${System.currentTimeMillis()}")
             prefs[Keys.BLOCKED_NUMBERS] = current
+            updatedCanonicalKeys = current.mapNotNull {
+                PhoneNumberInfoHelper.canonicalKey(it.substringBefore('|')).takeIf { k -> k.isNotBlank() }
+            }.toSet()
         }
+        fastPrefs.edit().putStringSet("blocked_keys", updatedCanonicalKeys).apply()
     }
 
     suspend fun unblockNumber(rawNumber: String) {
         val canonical = PhoneNumberInfoHelper.canonicalKey(rawNumber)
         if (canonical.isBlank()) return
+        var updatedCanonicalKeys: Set<String> = emptySet()
         context.settingsDataStore.edit { prefs ->
             val current = prefs[Keys.BLOCKED_NUMBERS].orEmpty().toMutableSet()
             current.removeAll { entry ->
@@ -436,7 +454,11 @@ class SettingsDataStore(private val context: Context) {
                 PhoneNumberInfoHelper.canonicalKey(existingNum) == canonical
             }
             prefs[Keys.BLOCKED_NUMBERS] = current
+            updatedCanonicalKeys = current.mapNotNull {
+                PhoneNumberInfoHelper.canonicalKey(it.substringBefore('|')).takeIf { k -> k.isNotBlank() }
+            }.toSet()
         }
+        fastPrefs.edit().putStringSet("blocked_keys", updatedCanonicalKeys).apply()
     }
 
     suspend fun isNumberBlocked(rawNumber: String): Boolean {
@@ -446,6 +468,44 @@ class SettingsDataStore(private val context: Context) {
         return current.any { entry ->
             PhoneNumberInfoHelper.canonicalKey(entry.substringBefore('|')) == canonical
         }
+    }
+
+    fun isFastCacheReady(): Boolean = fastPrefs.getBoolean("cache_seeded", false)
+
+    fun isNumberBlockedFast(rawNumber: String): Boolean {
+        val canonical = PhoneNumberInfoHelper.canonicalKey(rawNumber)
+        if (canonical.isBlank()) return false
+        return fastPrefs.getStringSet("blocked_keys", emptySet()).orEmpty().contains(canonical)
+    }
+
+    fun getRingtoneUriFast(slotIndex: Int?): String? {
+        return when (slotIndex) {
+            1 -> fastPrefs.getString("sim2_ringtone_uri", null)
+            else -> fastPrefs.getString("sim1_ringtone_uri", null)
+        }
+    }
+
+    fun getLanguageFast(): AppLanguage {
+        val raw = fastPrefs.getString("language", AppLanguage.ENGLISH.name)
+        return runCatching { AppLanguage.valueOf(raw ?: AppLanguage.ENGLISH.name) }
+            .getOrDefault(AppLanguage.ENGLISH)
+    }
+
+    fun isSensitiveProtectionFast(): Boolean = fastPrefs.getBoolean("sensitive_protection", false)
+
+    suspend fun syncFastCallCache() {
+        val prefs = context.settingsDataStore.data.first()
+        val blockedKeys = prefs[Keys.BLOCKED_NUMBERS].orEmpty().mapNotNull {
+            PhoneNumberInfoHelper.canonicalKey(it.substringBefore('|')).takeIf { k -> k.isNotBlank() }
+        }.toSet()
+        fastPrefs.edit()
+            .putBoolean("cache_seeded", true)
+            .putStringSet("blocked_keys", blockedKeys)
+            .putString("sim1_ringtone_uri", prefs[Keys.SIM1_RINGTONE_URI])
+            .putString("sim2_ringtone_uri", prefs[Keys.SIM2_RINGTONE_URI])
+            .putString("language", prefs[Keys.APP_LANGUAGE] ?: AppLanguage.ENGLISH.name)
+            .putBoolean("sensitive_protection", prefs[Keys.SENSITIVE_PROTECTION_ENABLED] ?: false)
+            .apply()
     }
 
     suspend fun saveNumberNote(rawNumber: String, note: String) {

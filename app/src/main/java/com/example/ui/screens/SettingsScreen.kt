@@ -105,6 +105,7 @@ fun SettingsScreen(
     onResetSimRingtone: (Int) -> Unit,
     onRequestDefaultDialer: () -> Unit,
     onRequestPermissions: () -> Unit,
+    onRequestFullScreenIntent: () -> Unit = {},
     onToggleDualSimMode: (DualSimMode) -> Unit,
     onToggleDtmfTones: (Boolean) -> Unit,
     onToggleHapticFeedback: (Boolean) -> Unit,
@@ -699,12 +700,23 @@ fun SettingsScreen(
                         }
                     }
 
-                    if (!permissions.hasCoreDialerPermissions || !permissions.readContacts || !permissions.readCallLog) {
+                    if (!permissions.hasCoreDialerPermissions || !permissions.readContacts || !permissions.readCallLog || !permissions.postNotifications) {
                         Button(
                             onClick = onRequestPermissions,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(strings.grantAllPermissionsButton)
+                        }
+                    }
+
+                    if (!permissions.canUseFullScreenIntent) {
+                        OutlinedButton(
+                            onClick = onRequestFullScreenIntent,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("settings_full_screen_calls_button")
+                        ) {
+                            Text(strings.fullScreenCallsButton)
                         }
                     }
                 }
