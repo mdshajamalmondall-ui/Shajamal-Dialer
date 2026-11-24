@@ -1,0 +1,6 @@
+{
+  "name": "Shajamal",
+  "description": "Smart dual-SIM phone dialer and calling app with independent SIM 1 and SIM 2 routing, clipboard copy/paste, call logs, contacts, and custom picture themes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
