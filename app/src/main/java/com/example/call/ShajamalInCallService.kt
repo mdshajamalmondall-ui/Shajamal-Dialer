@@ -16,6 +16,7 @@ import android.telecom.InCallService
 import androidx.core.app.NotificationCompat
 import com.example.R
 import com.example.data.preferences.SettingsDataStore
+import com.example.data.telephony.DeviceDirectoryRepository
 import com.example.data.telephony.DualSimCallManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +48,7 @@ class ShajamalInCallService : InCallService() {
 
         override fun onDetailsChanged(call: Call, details: Call.Details) {
             CallRepository.refreshState()
+            resolveCallerAsync(call)
         }
     }
 
@@ -114,12 +116,26 @@ class ShajamalInCallService : InCallService() {
 
         val simLabel = resolveSimLabel(call)
         CallRepository.setCall(call, simLabel, initialState)
+        resolveCallerAsync(call)
         postCallNotification(call, initialState, muteChannelRingtone = muteChannelRingtone)
 
         val launchIntent = Intent(this, CallActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         runCatching { startActivity(launchIntent) }
+    }
+
+    private fun resolveCallerAsync(call: Call) {
+        val number = call.details?.handle?.schemeSpecificPart.orEmpty()
+        if (number.isBlank()) return
+        serviceScope.launch {
+            val directory = DeviceDirectoryRepository(
+                applicationContext,
+                DualSimCallManager(applicationContext)
+            )
+            val (name, photoUri) = directory.resolveCallerIdentity(number)
+            CallRepository.updateResolvedCallerIdentity(number, name, photoUri)
+        }
     }
 
     override fun onCallRemoved(call: Call) {

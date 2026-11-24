@@ -35,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -74,6 +75,7 @@ fun ContactsScreen(
     onCallWithSim: (String, Int) -> Unit,
     onEditInDialer: (String) -> Unit,
     onCopyNumber: (String) -> Unit,
+    onOpenProfile: (ContactItem) -> Unit,
     onOpenSettings: () -> Unit,
     onRequestPermissions: () -> Unit,
     modifier: Modifier = Modifier
@@ -209,6 +211,10 @@ fun ContactsScreen(
                 onEditInDialer = { number ->
                     selectedContact = null
                     onEditInDialer(number)
+                },
+                onOpenProfile = {
+                    selectedContact = null
+                    onOpenProfile(contact)
                 }
             )
         }
@@ -278,7 +284,8 @@ private fun ContactDetailSheet(
     onCallSim1: (String) -> Unit,
     onCallSim2: (String) -> Unit,
     onCopy: (String) -> Unit,
-    onEditInDialer: (String) -> Unit
+    onEditInDialer: (String) -> Unit,
+    onOpenProfile: () -> Unit
 ) {
     val pictureTheme = LocalPictureTheme.current
     val strings = LocalAppStrings.current
@@ -289,14 +296,21 @@ private fun ContactDetailSheet(
             .padding(bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             ContactAvatar(name = contact.name, photoUri = contact.photoUri, size = 54.dp)
             Spacer(Modifier.width(14.dp))
             Text(
                 text = contact.name,
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
             )
+            OutlinedButton(onClick = onOpenProfile) {
+                Text(strings.contactProfile)
+            }
         }
 
         contact.phoneNumbers.forEach { number ->

@@ -1,8 +1,10 @@
 package com.example.data.telephony
 
 import android.Manifest
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.provider.CallLog
 import android.provider.ContactsContract
 import androidx.core.content.ContextCompat
@@ -112,6 +114,7 @@ class DeviceDirectoryRepository(
             ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY,
             ContactsContract.CommonDataKinds.Phone.NUMBER,
             ContactsContract.CommonDataKinds.Phone.STARRED,
+            ContactsContract.CommonDataKinds.Phone.PHOTO_URI,
             ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI
         )
 
@@ -127,7 +130,8 @@ class DeviceDirectoryRepository(
                 val nameIdx = cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY)
                 val numIdx = cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
                 val starIdx = cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.STARRED)
-                val photoIdx = cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
+                val photoUriIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
+                val thumbIdx = cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
 
                 while (cursor.moveToNext()) {
                     val contactId = cursor.getLong(idIdx)
@@ -135,7 +139,9 @@ class DeviceDirectoryRepository(
                     val rawNumber = cursor.getString(numIdx).orEmpty().trim()
                     if (rawNumber.isBlank()) continue
                     val starred = cursor.getInt(starIdx) == 1
-                    val photo = cursor.getString(photoIdx)
+                    val photo = (if (photoUriIdx >= 0) cursor.getString(photoUriIdx) else null)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: cursor.getString(thumbIdx)?.takeIf { it.isNotBlank() }
 
                     val builder = contactMap.getOrPut(contactId) {
                         MutableContactBuilder(contactId, name, starred, photo)
@@ -158,6 +164,71 @@ class DeviceDirectoryRepository(
                 photoUri = it.photoUri
             )
         }
+    }
+
+    suspend fun resolveCallerIdentity(number: String): Pair<String?, String?> = withContext(Dispatchers.IO) {
+        val cleaned = number.trim()
+        if (cleaned.isBlank()) return@withContext null to null
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) return@withContext null to null
+
+        runCatching {
+            val lookupUri = Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                Uri.encode(cleaned)
+            )
+            val projection = arrayOf(
+                ContactsContract.PhoneLookup.DISPLAY_NAME,
+                ContactsContract.PhoneLookup.PHOTO_URI,
+                ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI
+            )
+            context.contentResolver.query(lookupUri, projection, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                    val photoIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.PHOTO_URI)
+                    val thumbIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI)
+                    val name = if (nameIdx >= 0) cursor.getString(nameIdx)?.takeIf { it.isNotBlank() } else null
+                    val photo = (if (photoIdx >= 0) cursor.getString(photoIdx) else null)?.takeIf { it.isNotBlank() }
+                        ?: (if (thumbIdx >= 0) cursor.getString(thumbIdx) else null)?.takeIf { it.isNotBlank() }
+                    return@withContext name to photo
+                }
+            }
+        }
+
+        val targetCanonical = PhoneNumberInfoHelper.canonicalKey(cleaned)
+        if (targetCanonical.length >= 6) {
+            val matched = loadContacts().firstOrNull { contact ->
+                contact.phoneNumbers.any { PhoneNumberInfoHelper.canonicalKey(it) == targetCanonical }
+            }
+            if (matched != null) {
+                return@withContext matched.name to matched.photoUri
+            }
+        }
+
+        null to null
+    }
+
+    suspend fun setContactStarred(contactId: Long, starred: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.WRITE_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) return@withContext false
+
+        runCatching {
+            val values = ContentValues().apply {
+                put(ContactsContract.Contacts.STARRED, if (starred) 1 else 0)
+            }
+            context.contentResolver.update(
+                ContactsContract.Contacts.CONTENT_URI,
+                values,
+                "${ContactsContract.Contacts._ID} = ?",
+                arrayOf(contactId.toString())
+            ) > 0
+        }.getOrDefault(false)
     }
 
     private data class MutableContactBuilder(

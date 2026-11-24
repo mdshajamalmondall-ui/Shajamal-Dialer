@@ -60,6 +60,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.data.model.CallerProfileTarget
+import com.example.data.model.FavoriteGroup
 import com.example.data.telephony.PhoneNumberInfoHelper
 import com.example.ui.ShajamalViewModel
 import com.example.ui.components.OutgoingCallOverlay
@@ -67,6 +69,7 @@ import com.example.ui.components.SimPickerBottomSheet
 import com.example.ui.components.ThemeBackdrop
 import com.example.ui.navigation.ShajamalRoutes
 import com.example.ui.screens.BlockListScreen
+import com.example.ui.screens.ContactProfileScreen
 import com.example.ui.screens.ContactsScreen
 import com.example.ui.screens.DialerScreen
 import com.example.ui.screens.FavoritesScreen
@@ -132,6 +135,8 @@ private fun ShajamalApp(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
     val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
+    val numberGroups by viewModel.numberGroups.collectAsStateWithLifecycle()
+    val activeProfileTarget by viewModel.activeProfileTarget.collectAsStateWithLifecycle()
     val dialField by viewModel.dialField.collectAsStateWithLifecycle()
     val simSlots by viewModel.simSlots.collectAsStateWithLifecycle()
     val isDefaultDialer by viewModel.isDefaultDialer.collectAsStateWithLifecycle()
@@ -265,7 +270,8 @@ private fun ShajamalApp(
                 val useNavRail = maxWidth >= 700.dp
                 val showChrome = currentRoute != ShajamalRoutes.SETTINGS &&
                     currentRoute != ShajamalRoutes.THEMES &&
-                    currentRoute != ShajamalRoutes.BLOCK_LIST
+                    currentRoute != ShajamalRoutes.BLOCK_LIST &&
+                    currentRoute != ShajamalRoutes.CONTACT_PROFILE
 
                 Scaffold(
                     containerColor = Color.Transparent,
@@ -371,6 +377,17 @@ private fun ShajamalApp(
                                         },
                                         onDeleteEntry = viewModel::deleteCallLogItem,
                                         onDeleteMultiple = viewModel::deleteMultipleCallLogs,
+                                        onOpenFullProfile = { group ->
+                                            viewModel.openCallerProfile(
+                                                CallerProfileTarget(
+                                                    number = group.number,
+                                                    displayTitle = group.displayTitle,
+                                                    photoUri = group.photoUri,
+                                                    contactId = group.contactId
+                                                )
+                                            )
+                                            navController.navigate(ShajamalRoutes.CONTACT_PROFILE)
+                                        },
                                         onOpenSettings = {
                                             navController.navigate(ShajamalRoutes.SETTINGS)
                                         },
@@ -428,6 +445,18 @@ private fun ShajamalApp(
                                         },
                                         onCopyNumber = { num ->
                                             viewModel.emitMessage("Copied $num to clipboard")
+                                        },
+                                        onOpenProfile = { contact ->
+                                            viewModel.openCallerProfile(
+                                                CallerProfileTarget(
+                                                    number = contact.primaryNumber,
+                                                    displayTitle = contact.name,
+                                                    photoUri = contact.photoUri,
+                                                    contactId = contact.id,
+                                                    isStarred = contact.isStarred
+                                                )
+                                            )
+                                            navController.navigate(ShajamalRoutes.CONTACT_PROFILE)
                                         },
                                         onOpenSettings = {
                                             navController.navigate(ShajamalRoutes.SETTINGS)
@@ -501,6 +530,51 @@ private fun ShajamalApp(
                                         onUnblockNumber = viewModel::unblockNumber,
                                         onBack = { navController.popBackStack() }
                                     )
+                                }
+
+                                composable(ShajamalRoutes.CONTACT_PROFILE) {
+                                    activeProfileTarget?.let { target ->
+                                        val key = PhoneNumberInfoHelper.canonicalKey(target.number)
+                                        val savedNote = if (key.isNotBlank()) numberNotes[key] else null
+                                        val group = if (key.isNotBlank()) {
+                                            numberGroups[key] ?: FavoriteGroup.NONE
+                                        } else {
+                                            FavoriteGroup.NONE
+                                        }
+                                        val blocked = key.isNotBlank() && blockedNumbers.any {
+                                            PhoneNumberInfoHelper.canonicalKey(it.number) == key
+                                        }
+                                        ContactProfileScreen(
+                                            target = target,
+                                            savedNote = savedNote,
+                                            selectedGroup = group,
+                                            isBlocked = blocked,
+                                            language = settings.language,
+                                            onBack = { navController.popBackStack() },
+                                            onToggleStar = {
+                                                viewModel.toggleContactFavorite(
+                                                    target.contactId,
+                                                    target.isStarred
+                                                )
+                                            },
+                                            onCallSim1 = { viewModel.placeCall(target.number, 0) },
+                                            onCallSim2 = { viewModel.placeCall(target.number, 1) },
+                                            onSelectGroup = { newGroup ->
+                                                viewModel.setNumberGroup(target.number, newGroup)
+                                            },
+                                            onSaveNote = { newNote ->
+                                                viewModel.saveNumberNote(target.number, newNote)
+                                            },
+                                            onToggleBlock = {
+                                                if (blocked) {
+                                                    viewModel.unblockNumber(target.number)
+                                                } else {
+                                                    viewModel.blockNumber(target.number, target.displayTitle)
+                                                }
+                                            },
+                                            onShowMessage = viewModel::emitMessage
+                                        )
+                                    }
                                 }
                             }
                         }

@@ -1,9 +1,5 @@
 package com.example.ui.screens
 
-import android.content.Intent
-import android.net.Uri
-import android.provider.CalendarContract
-import android.provider.ContactsContract
 import android.text.format.DateUtils
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
@@ -132,49 +128,28 @@ fun RecentsScreen(
     onToggleBlock: (String, Boolean) -> Unit,
     onDeleteEntry: (Long) -> Unit,
     onDeleteMultiple: (Set<Long>) -> Unit,
+    onOpenFullProfile: (GroupedCallLogItem) -> Unit,
     onOpenSettings: () -> Unit,
     onRequestPermissions: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val strings = LocalAppStrings.current
-    val pictureTheme = LocalPictureTheme.current
 
     var isEditMode by remember { mutableStateOf(false) }
     var selectedGroupKeys by remember { mutableStateOf(setOf<String>()) }
     var showAnalysisSheet by remember { mutableStateOf(false) }
 
     var activeHistoryGroupKey by remember { mutableStateOf<String?>(null) }
-    var activeProfileGroupKey by remember { mutableStateOf<String?>(null) }
     var noteDialogNumber by remember { mutableStateOf<String?>(null) }
 
     val activeHistoryGroup = remember(activeHistoryGroupKey, groupedLogs) {
         groupedLogs.firstOrNull { it.groupKey == activeHistoryGroupKey }
-    }
-    val activeProfileGroup = remember(activeProfileGroupKey, groupedLogs) {
-        groupedLogs.firstOrNull { it.groupKey == activeProfileGroupKey }
     }
 
     fun isNumberBlocked(number: String): Boolean {
         val canonical = PhoneNumberInfoHelper.canonicalKey(number)
         if (canonical.isBlank()) return false
         return blockedNumbers.any { PhoneNumberInfoHelper.canonicalKey(it.number) == canonical }
-    }
-
-    fun openContactOrInsert(group: GroupedCallLogItem) {
-        if (group.contactId != null) {
-            val contactUri = Uri.withAppendedPath(
-                ContactsContract.Contacts.CONTENT_URI,
-                group.contactId.toString()
-            )
-            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, contactUri)) }
-        } else {
-            val insertIntent = Intent(ContactsContract.Intents.Insert.ACTION).apply {
-                type = ContactsContract.RawContacts.CONTENT_TYPE
-                putExtra(ContactsContract.Intents.Insert.PHONE, group.number)
-            }
-            runCatching { context.startActivity(insertIntent) }
-        }
     }
 
     Column(
@@ -446,7 +421,7 @@ fun RecentsScreen(
                                 }
                             },
                             onQuickCall = { onCallChooseSim(group.number) },
-                            onOpenProfile = { activeProfileGroupKey = group.groupKey },
+                            onOpenProfile = { onOpenFullProfile(group) },
                             onOpenHistory = { activeHistoryGroupKey = group.groupKey },
                             onTagCallerId = { noteDialogNumber = group.number },
                             onEditInKeypad = { onEditInDialer(group.number) },
@@ -518,7 +493,7 @@ fun RecentsScreen(
                                 checked = false,
                                 onCardClick = { activeHistoryGroupKey = group.groupKey },
                                 onQuickCall = { onCallChooseSim(group.number) },
-                                onOpenProfile = { activeProfileGroupKey = group.groupKey },
+                                onOpenProfile = { onOpenFullProfile(group) },
                                 onOpenHistory = { activeHistoryGroupKey = group.groupKey },
                                 onTagCallerId = { noteDialogNumber = group.number },
                                 onEditInKeypad = { onEditInDialer(group.number) },
@@ -555,53 +530,10 @@ fun RecentsScreen(
                 },
                 onToggleBlock = { onToggleBlock(group.number, blocked) },
                 onOpenFullProfile = {
-                    val key = group.groupKey
                     activeHistoryGroupKey = null
-                    activeProfileGroupKey = key
+                    onOpenFullProfile(group)
                 },
                 onDeleteEntry = onDeleteEntry
-            )
-        }
-    }
-
-    // Modal Bottom Sheet: Full Caller Profile, Notes & Reminder
-    activeProfileGroup?.let { group ->
-        val blocked = isNumberBlocked(group.number)
-        val canonical = PhoneNumberInfoHelper.canonicalKey(group.number)
-        val note = if (canonical.isNotBlank()) numberNotes[canonical] else null
-        ModalBottomSheet(
-            onDismissRequest = { activeProfileGroupKey = null },
-            containerColor = MaterialTheme.colorScheme.surface
-        ) {
-            FullCallerProfileSheet(
-                group = group,
-                savedNote = note,
-                isBlocked = blocked,
-                sim1Accent = pictureTheme.sim1Accent,
-                sim2Accent = pictureTheme.sim2Accent,
-                onCallSim1 = {
-                    activeProfileGroupKey = null
-                    onCallWithSim(group.number, 0)
-                },
-                onCallSim2 = {
-                    activeProfileGroupKey = null
-                    onCallWithSim(group.number, 1)
-                },
-                onEditTag = { noteDialogNumber = group.number },
-                onOpenWhatsApp = {
-                    val url = PhoneNumberInfoHelper.buildWhatsAppUrl(group.number)
-                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                },
-                onSetReminder = {
-                    val calIntent = Intent(Intent.ACTION_INSERT).apply {
-                        data = CalendarContract.Events.CONTENT_URI
-                        putExtra(CalendarContract.Events.TITLE, "Call ${group.displayTitle}")
-                        putExtra(CalendarContract.Events.DESCRIPTION, "Follow-up call: ${group.number}")
-                    }
-                    runCatching { context.startActivity(calIntent) }
-                },
-                onOpenContact = { openContactOrInsert(group) },
-                onToggleBlock = { onToggleBlock(group.number, blocked) }
             )
         }
     }
@@ -1141,182 +1073,6 @@ private fun GroupedHistoryDetailSheet(
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FullCallerProfileSheet(
-    group: GroupedCallLogItem,
-    savedNote: String?,
-    isBlocked: Boolean,
-    sim1Accent: Color,
-    sim2Accent: Color,
-    onCallSim1: () -> Unit,
-    onCallSim2: () -> Unit,
-    onEditTag: () -> Unit,
-    onOpenWhatsApp: () -> Unit,
-    onSetReminder: () -> Unit,
-    onOpenContact: () -> Unit,
-    onToggleBlock: () -> Unit
-) {
-    val strings = LocalAppStrings.current
-    val carrierAndRegion = remember(group.number) {
-        PhoneNumberInfoHelper.detectCarrierAndRegion(group.number)
-    }
-    val totalTalkTime = remember(group.entries) {
-        group.entries.sumOf { it.durationSeconds }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .padding(bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CallerAvatar(title = group.displayTitle, photoUri = group.photoUri, size = 56.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = group.displayTitle,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = PhoneNumberInfoHelper.formatDisplayNumber(group.number),
-                    fontFamily = JetBrainsMonoFontFamily,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = carrierAndRegion,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // Quick Stats
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            StatTile(
-                label = strings.totalCalls,
-                value = group.callCount.toString(),
-                accent = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f)
-            )
-            StatTile(
-                label = strings.totalDuration,
-                value = formatShortDuration(totalTalkTime),
-                accent = Color(0xFF16A34A),
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        // Saved Note / Tag card
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .clickable(onClick = onEditTag)
-        ) {
-            Row(
-                modifier = Modifier.padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Rounded.EditNote, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = strings.tagCallerId,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = savedNote?.takeIf { it.isNotBlank() } ?: strings.addNote,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                Icon(Icons.Rounded.Edit, contentDescription = strings.edit, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-            }
-        }
-
-        // Direct SIM 1 & SIM 2 call buttons
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Button(
-                onClick = onCallSim1,
-                colors = ButtonDefaults.buttonColors(containerColor = sim1Accent),
-                modifier = Modifier.weight(1f).height(46.dp)
-            ) {
-                Icon(Icons.Rounded.Call, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(strings.callSim1, color = Color.White)
-            }
-            Button(
-                onClick = onCallSim2,
-                colors = ButtonDefaults.buttonColors(containerColor = sim2Accent),
-                modifier = Modifier.weight(1f).height(46.dp)
-            ) {
-                Icon(Icons.Rounded.Call, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(strings.callSim2, color = Color.White)
-            }
-        }
-
-        // Reminder, WhatsApp, Contact, Block
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(onClick = onSetReminder, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Rounded.Event, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(strings.setCallReminder, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            OutlinedButton(onClick = onOpenWhatsApp, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Rounded.Chat, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(strings.whatsApp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(onClick = onOpenContact, modifier = Modifier.weight(1f)) {
-                Icon(
-                    imageVector = if (group.contactId != null) Icons.Rounded.Person else Icons.Rounded.PersonAdd,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = if (group.contactId != null) strings.openSystemContact else strings.saveContact,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            OutlinedButton(onClick = onToggleBlock, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Rounded.Block, contentDescription = null, tint = CallMissedRed, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = if (isBlocked) strings.unblock else strings.block,
-                    color = CallMissedRed,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
             }
         }
     }

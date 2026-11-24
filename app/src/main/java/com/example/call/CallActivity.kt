@@ -1,9 +1,14 @@
 package com.example.call
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.CalendarContract
 import android.telecom.Call
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -11,11 +16,22 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +39,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -31,8 +48,10 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CallEnd
+import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.Dialpad
 import androidx.compose.material.icons.rounded.FiberManualRecord
 import androidx.compose.material.icons.rounded.Mic
@@ -41,31 +60,45 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import coil.compose.AsyncImage
 import com.example.data.model.DialerSettings
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.telephony.PhoneNumberInfoHelper
@@ -79,10 +112,23 @@ import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.ShajamalTheme
 import com.example.ui.theme.ThemeCatalog
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.Calendar
+import kotlin.math.roundToInt
 
 class CallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
         enableEdgeToEdge()
         val settingsDataStore = SettingsDataStore(applicationContext)
 
@@ -120,8 +166,11 @@ class CallActivity : ComponentActivity() {
 private fun InCallScreen(callState: ActiveCallUiState) {
     val context = LocalContext.current
     val strings = LocalAppStrings.current
+    val scope = rememberCoroutineScope()
     var showKeypad by remember { mutableStateOf(false) }
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
+    var showRemindDialog by remember { mutableStateOf(false) }
+    var showQuickMessageDialog by remember { mutableStateOf(false) }
 
     val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -274,14 +323,16 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                         centerText = avatarText,
                         accentColor = MaterialTheme.colorScheme.primary,
                         secondaryColor = Color(0xFFFDE68A),
-                        size = 250.dp
+                        size = 250.dp,
+                        photoUri = callState.photoUri
                     )
                 } else {
                     Box(
                         modifier = Modifier
-                            .size(132.dp)
+                            .size(136.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.22f)),
+                            .background(Color.White.copy(alpha = 0.22f))
+                            .border(BorderStroke(2.dp, Color.White.copy(alpha = 0.55f)), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -291,6 +342,14 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                             color = Color.White,
                             fontWeight = FontWeight.Bold
                         )
+                        if (!callState.photoUri.isNullOrBlank()) {
+                            AsyncImage(
+                                model = callState.photoUri,
+                                contentDescription = callState.callerName ?: callState.number,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
                 }
             } else {
@@ -340,47 +399,69 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 if (callState.callState == Call.STATE_RINGING) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 16.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(bottom = 14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(22.dp)
                     ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = CallEndRed,
+                        // Remind Me & Message row matching Screenshot
+                        Row(
                             modifier = Modifier
-                                .size(74.dp)
-                                .clip(CircleShape)
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IncomingActionIconLabel(
+                                icon = Icons.Rounded.Alarm,
+                                label = strings.remindMe,
+                                onClick = { showRemindDialog = true },
+                                modifier = Modifier.testTag("in_call_remind_me_button")
+                            )
+                            IncomingActionIconLabel(
+                                icon = Icons.Rounded.ChatBubble,
+                                label = strings.messageLabel,
+                                onClick = { showQuickMessageDialog = true },
+                                modifier = Modifier.testTag("in_call_message_button")
+                            )
+                        }
+
+                        // Slide to answer pill bar
+                        SlideToAnswerBar(
+                            label = strings.slideToAnswer,
+                            onAnswer = { CallRepository.answerCall() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("in_call_slide_to_answer")
+                        )
+
+                        // Quick Decline pill button
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = CallEndRed.copy(alpha = 0.92f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
                                 .clickable { CallRepository.rejectOrDisconnect() }
                                 .testTag("in_call_decline_button")
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 22.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 Icon(
                                     imageVector = Icons.Rounded.CallEnd,
-                                    contentDescription = "Decline call",
+                                    contentDescription = strings.declineCall,
                                     tint = Color.White,
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
-                            }
-                        }
-
-                        Surface(
-                            shape = CircleShape,
-                            color = CallIncomingGreen,
-                            modifier = Modifier
-                                .size(74.dp)
-                                .clip(CircleShape)
-                                .clickable { CallRepository.answerCall() }
-                                .testTag("in_call_answer_button")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Call,
-                                    contentDescription = "Answer call",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(32.dp)
+                                Text(
+                                    text = strings.declineCall,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White
                                 )
                             }
                         }
@@ -487,6 +568,295 @@ private fun InCallScreen(callState: ActiveCallUiState) {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    if (showRemindDialog) {
+        val options = listOf(
+            strings.remind15m to (15L * 60L * 1000L),
+            strings.remind30m to (30L * 60L * 1000L),
+            strings.remind1h to (60L * 60L * 1000L),
+            strings.remindTomorrow9am to null
+        )
+        AlertDialog(
+            onDismissRequest = { showRemindDialog = false },
+            title = { Text(strings.remindMe) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    options.forEach { (label, offset) ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    showRemindDialog = false
+                                    val startMillis = if (offset == null) {
+                                        Calendar.getInstance().apply {
+                                            add(Calendar.DAY_OF_YEAR, 1)
+                                            set(Calendar.HOUR_OF_DAY, 9)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                        }.timeInMillis
+                                    } else {
+                                        System.currentTimeMillis() + offset
+                                    }
+                                    scope.launch {
+                                        SettingsDataStore(context.applicationContext)
+                                            .saveNumberNote(callState.number, "Reminder ($label)")
+                                    }
+                                    CallRepository.rejectOrDisconnect()
+                                    val calIntent = Intent(Intent.ACTION_INSERT).apply {
+                                        data = CalendarContract.Events.CONTENT_URI
+                                        putExtra(
+                                            CalendarContract.Events.TITLE,
+                                            "Call back ${callState.callerName ?: callState.number}"
+                                        )
+                                        putExtra(
+                                            CalendarContract.Events.DESCRIPTION,
+                                            "Phone: ${callState.number}"
+                                        )
+                                        putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startMillis)
+                                        putExtra(
+                                            CalendarContract.EXTRA_EVENT_END_TIME,
+                                            startMillis + 15L * 60L * 1000L
+                                        )
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    runCatching { context.startActivity(calIntent) }
+                                    Toast.makeText(
+                                        context,
+                                        "Reminder saved: $label",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showRemindDialog = false }) {
+                    Text(strings.cancel)
+                }
+            }
+        )
+    }
+
+    if (showQuickMessageDialog) {
+        val quickReplies = listOf(
+            "I'll call you right back.",
+            "In a meeting right now, please text.",
+            "Can't talk at the moment.",
+            "On my way!"
+        )
+        var customReply by remember { mutableStateOf("") }
+
+        fun sendReplyAndDecline(message: String) {
+            val trimmed = message.trim()
+            if (trimmed.isBlank()) return
+            showQuickMessageDialog = false
+            val rejected = CallRepository.rejectWithMessage(trimmed)
+            if (!rejected) {
+                CallRepository.rejectOrDisconnect()
+                val smsIntent = Intent(
+                    Intent.ACTION_SENDTO,
+                    Uri.parse("smsto:${Uri.encode(callState.number)}")
+                ).apply {
+                    putExtra("sms_body", trimmed)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                runCatching { context.startActivity(smsIntent) }
+            }
+            Toast.makeText(context, "Message sent", Toast.LENGTH_SHORT).show()
+        }
+
+        AlertDialog(
+            onDismissRequest = { showQuickMessageDialog = false },
+            title = { Text(strings.quickReplyPrompt) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    quickReplies.forEach { reply ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { sendReplyAndDecline(reply) }
+                        ) {
+                            Text(
+                                text = reply,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp)
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = customReply,
+                        onValueChange = { customReply = it },
+                        placeholder = { Text(strings.notePlaceholder) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { sendReplyAndDecline(customReply) },
+                    enabled = customReply.isNotBlank()
+                ) {
+                    Text(strings.smsLabel)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showQuickMessageDialog = false }) {
+                    Text(strings.cancel)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun IncomingActionIconLabel(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = Color.White,
+            modifier = Modifier.size(26.dp)
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun SlideToAnswerBar(
+    label: String,
+    onAnswer: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    var answered by remember { mutableStateOf(false) }
+
+    val shimmerTransition = rememberInfiniteTransition(label = "slide_shimmer")
+    val shimmerAlpha by shimmerTransition.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "slide_alpha"
+    )
+
+    BoxWithConstraints(
+        modifier = modifier
+            .height(68.dp)
+            .clip(RoundedCornerShape(50))
+            .background(Color.White.copy(alpha = 0.26f))
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)), RoundedCornerShape(50))
+            .padding(5.dp)
+    ) {
+        val trackWidthPx = with(density) { maxWidth.toPx() }
+        val thumbSize = 58.dp
+        val thumbSizePx = with(density) { thumbSize.toPx() }
+        val maxOffsetPx = (trackWidthPx - thumbSizePx).coerceAtLeast(1f)
+
+        var rawOffsetPx by remember { mutableFloatStateOf(0f) }
+        val animatedOffsetPx by animateFloatAsState(
+            targetValue = rawOffsetPx,
+            animationSpec = spring(),
+            label = "slider_thumb"
+        )
+
+        val progress = (animatedOffsetPx / maxOffsetPx).coerceIn(0f, 1f)
+
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color.White,
+                modifier = Modifier.alpha((1f - progress * 1.4f).coerceIn(0.15f, 1f) * shimmerAlpha)
+            )
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = Color.White,
+            shadowElevation = 4.dp,
+            modifier = Modifier
+                .offset { IntOffset(animatedOffsetPx.roundToInt(), 0) }
+                .size(thumbSize)
+                .pointerInput(maxOffsetPx) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (!answered) {
+                                if (rawOffsetPx >= maxOffsetPx * 0.72f) {
+                                    answered = true
+                                    rawOffsetPx = maxOffsetPx
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onAnswer()
+                                } else {
+                                    rawOffsetPx = 0f
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            if (!answered) rawOffsetPx = 0f
+                        },
+                        onHorizontalDrag = { _, dragAmount ->
+                            if (!answered) {
+                                rawOffsetPx = (rawOffsetPx + dragAmount).coerceIn(0f, maxOffsetPx)
+                                if (rawOffsetPx >= maxOffsetPx * 0.92f) {
+                                    answered = true
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onAnswer()
+                                }
+                            }
+                        }
+                    )
+                }
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Rounded.Call,
+                    contentDescription = label,
+                    tint = CallIncomingGreen,
+                    modifier = Modifier.size(28.dp)
+                )
             }
         }
     }

@@ -11,16 +11,19 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.call.CallRepository
 import com.example.data.model.AppLanguage
 import com.example.data.model.BlockedNumberEntry
 import com.example.data.model.CallAnalyticsSummary
 import com.example.data.model.CallDirection
 import com.example.data.model.CallLogItem
 import com.example.data.model.CallPlacementResult
+import com.example.data.model.CallerProfileTarget
 import com.example.data.model.ContactItem
 import com.example.data.model.DialerSettings
 import com.example.data.model.DoodleDesign
 import com.example.data.model.DualSimMode
+import com.example.data.model.FavoriteGroup
 import com.example.data.model.GroupedCallLogItem
 import com.example.data.model.OutgoingAnimationState
 import com.example.data.model.PermissionSnapshot
@@ -72,6 +75,12 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
     )
 
     val numberNotes: StateFlow<Map<String, String>> = settingsDataStore.numberNotesFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyMap()
+    )
+
+    val numberGroups: StateFlow<Map<String, FavoriteGroup>> = settingsDataStore.numberGroupsFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyMap()
@@ -180,6 +189,33 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
         } else {
             contacts.firstOrNull { c ->
                 c.phoneNumbers.any { PhoneNumberInfoHelper.canonicalKey(it) == canonical }
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private val _rawProfileTarget = MutableStateFlow<CallerProfileTarget?>(null)
+    val activeProfileTarget: StateFlow<CallerProfileTarget?> = combine(
+        _rawProfileTarget,
+        _allContacts
+    ) { target, contacts ->
+        target?.let { current ->
+            val key = PhoneNumberInfoHelper.canonicalKey(current.number)
+            val matched = if (current.contactId != null) {
+                contacts.firstOrNull { it.id == current.contactId }
+            } else {
+                contacts.firstOrNull { c ->
+                    c.phoneNumbers.any { PhoneNumberInfoHelper.canonicalKey(it) == key && key.isNotBlank() }
+                }
+            }
+            if (matched != null) {
+                current.copy(
+                    displayTitle = matched.name,
+                    photoUri = matched.photoUri ?: current.photoUri,
+                    contactId = matched.id,
+                    isStarred = matched.isStarred
+                )
+            } else {
+                current
             }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
@@ -355,12 +391,18 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
         }
 
         viewModelScope.launch {
+            CallRepository.setPendingOutgoingCaller(
+                number = sanitized,
+                callerName = matchedContact?.name,
+                photoUri = matchedContact?.photoUri
+            )
             _outgoingAnimation.value = OutgoingAnimationState(
                 number = sanitized,
                 displayName = matchedContact?.name,
                 simLabel = slot.label,
                 carrierName = slot.carrierName,
-                slotIndex = slotIndex
+                slotIndex = slotIndex,
+                photoUri = matchedContact?.photoUri
             )
             val result = dualSimCallManager.placeCall(sanitized, slotIndex)
             delay(500L)
@@ -501,6 +543,34 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             settingsDataStore.saveNumberNote(cleaned, note)
             emitMessage(if (note.isBlank()) "Note cleared" else "Note saved")
+        }
+    }
+
+    fun openCallerProfile(target: CallerProfileTarget) {
+        _rawProfileTarget.value = target
+    }
+
+    fun setNumberGroup(number: String, group: FavoriteGroup) {
+        val cleaned = DualSimCallManager.sanitizeDialNumber(number).ifBlank { number }
+        if (cleaned.isBlank()) return
+        viewModelScope.launch {
+            settingsDataStore.setNumberGroup(cleaned, group)
+        }
+    }
+
+    fun toggleContactFavorite(contactId: Long?, currentlyStarred: Boolean) {
+        if (contactId == null) {
+            emitMessage("Save this number as a contact to mark favorite.")
+            return
+        }
+        viewModelScope.launch {
+            val updated = directoryRepository.setContactStarred(contactId, !currentlyStarred)
+            if (updated) {
+                _allContacts.value = directoryRepository.loadContacts()
+                emitMessage(if (!currentlyStarred) "Added to Favorites" else "Removed from Favorites")
+            } else {
+                emitMessage("Grant Contacts write permission to update favorite.")
+            }
         }
     }
 

@@ -139,7 +139,23 @@ data class AppStrings(
     val blockedDirection: String,
     val voicemailDirection: String,
     val permBannerText: String,
-    val allow: String
+    val allow: String,
+    val favoriteGroupTitle: String,
+    val numberNoteAndReminderTitle: String,
+    val saveNoteButton: String,
+    val scheduleCallReminder: String,
+    val personalBadge: String,
+    val smsLabel: String,
+    val waLabel: String,
+    val remind15m: String,
+    val remind30m: String,
+    val remind1h: String,
+    val remindTomorrow9am: String,
+    val remindMe: String,
+    val messageLabel: String,
+    val slideToAnswer: String,
+    val declineCall: String,
+    val quickReplyPrompt: String
 )
 
 val EnglishStrings = AppStrings(
@@ -278,7 +294,23 @@ val EnglishStrings = AppStrings(
     blockedDirection = "Blocked",
     voicemailDirection = "Voicemail",
     permBannerText = "Grant Phone & Contacts permissions for Dual SIM calling",
-    allow = "Allow"
+    allow = "Allow",
+    favoriteGroupTitle = "Favorite Group",
+    numberNoteAndReminderTitle = "Number Note & Call Reminder",
+    saveNoteButton = "Save Note",
+    scheduleCallReminder = "Schedule Call Reminder",
+    personalBadge = "Personal",
+    smsLabel = "SMS",
+    waLabel = "WA",
+    remind15m = "15 min",
+    remind30m = "30 min",
+    remind1h = "1 hour",
+    remindTomorrow9am = "Tomorrow 9 AM",
+    remindMe = "Remind Me",
+    messageLabel = "Message",
+    slideToAnswer = "slide to answer",
+    declineCall = "Decline",
+    quickReplyPrompt = "Quick Reply Message"
 )
 
 val BengaliStrings = AppStrings(
@@ -417,7 +449,23 @@ val BengaliStrings = AppStrings(
     blockedDirection = "ব্লকড",
     voicemailDirection = "ভয়েসমেইল",
     permBannerText = "ডুয়াল সিম কলের জন্য ফোন ও কন্টাক্ট পারমিশন দিন",
-    allow = "দিন"
+    allow = "দিন",
+    favoriteGroupTitle = "ফেভারিট গ্রুপ",
+    numberNoteAndReminderTitle = "নাম্বার নোট ও কল রিমাইন্ডার",
+    saveNoteButton = "নোট সেভ",
+    scheduleCallReminder = "কল রিমাইন্ডার দিন",
+    personalBadge = "পার্সোনাল",
+    smsLabel = "এসএমএস",
+    waLabel = "হোয়াটসঅ্যাপ",
+    remind15m = "১৫ মিনিট",
+    remind30m = "৩০ মিনিট",
+    remind1h = "১ ঘণ্টা",
+    remindTomorrow9am = "আগামীকাল ৯টা",
+    remindMe = "রিমাইন্ড মি",
+    messageLabel = "মেসেজ",
+    slideToAnswer = "স্লাইড করে ধরুন",
+    declineCall = "কল কাটুন",
+    quickReplyPrompt = "দ্রুত মেসেজ পাঠান"
 )
 
 fun stringsFor(language: AppLanguage): AppStrings =

@@ -17,6 +17,7 @@ import com.example.data.model.BlockedNumberEntry
 import com.example.data.model.DialerSettings
 import com.example.data.model.DoodleDesign
 import com.example.data.model.DualSimMode
+import com.example.data.model.FavoriteGroup
 import com.example.data.telephony.PhoneNumberInfoHelper
 import com.example.ui.theme.ThemeCatalog
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,7 @@ class SettingsDataStore(private val context: Context) {
         val APP_LANGUAGE = stringPreferencesKey("app_language")
         val BLOCKED_NUMBERS = stringSetPreferencesKey("blocked_numbers")
         val NUMBER_NOTES = stringSetPreferencesKey("number_notes")
+        val NUMBER_GROUPS = stringSetPreferencesKey("number_groups")
         val SIM1_RINGTONE_URI = stringPreferencesKey("sim1_ringtone_uri")
         val SIM1_RINGTONE_NAME = stringPreferencesKey("sim1_ringtone_name")
         val SIM2_RINGTONE_URI = stringPreferencesKey("sim2_ringtone_uri")
@@ -95,6 +97,20 @@ class SettingsDataStore(private val context: Context) {
                     val key = encoded.substring(0, idx)
                     val note = encoded.substring(idx + 1)
                     if (note.isNotBlank()) put(key, note)
+                }
+            }
+        }
+    }
+
+    val numberGroupsFlow: Flow<Map<String, FavoriteGroup>> = context.settingsDataStore.data.map { prefs ->
+        val rawSet = prefs[Keys.NUMBER_GROUPS].orEmpty()
+        buildMap {
+            rawSet.forEach { encoded ->
+                val idx = encoded.indexOf('|')
+                if (idx > 0 && idx < encoded.length - 1) {
+                    val key = encoded.substring(0, idx)
+                    val group = FavoriteGroup.fromId(encoded.substring(idx + 1))
+                    if (group != FavoriteGroup.NONE) put(key, group)
                 }
             }
         }
@@ -272,6 +288,19 @@ class SettingsDataStore(private val context: Context) {
                 current.add("$canonical|$cleanNote")
             }
             prefs[Keys.NUMBER_NOTES] = current
+        }
+    }
+
+    suspend fun setNumberGroup(rawNumber: String, group: FavoriteGroup) {
+        val canonical = PhoneNumberInfoHelper.canonicalKey(rawNumber)
+        if (canonical.isBlank()) return
+        context.settingsDataStore.edit { prefs ->
+            val current = prefs[Keys.NUMBER_GROUPS].orEmpty().toMutableSet()
+            current.removeAll { it.substringBefore('|') == canonical }
+            if (group != FavoriteGroup.NONE) {
+                current.add("$canonical|${group.id}")
+            }
+            prefs[Keys.NUMBER_GROUPS] = current
         }
     }
 }

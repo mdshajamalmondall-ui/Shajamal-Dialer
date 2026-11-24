@@ -7,6 +7,7 @@ import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.InCallService
 import android.telecom.VideoProfile
+import com.example.data.telephony.PhoneNumberInfoHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,6 +16,7 @@ import java.io.File
 data class ActiveCallUiState(
     val number: String,
     val callerName: String?,
+    val photoUri: String? = null,
     val simLabel: String?,
     val callState: Int,
     val connectTimeMillis: Long,
@@ -41,6 +43,10 @@ object CallRepository {
     private var currentRecordingFile: File? = null
     private var lastRecordingPath: String? = null
 
+    private var pendingCanonicalKey: String? = null
+    private var resolvedCallerName: String? = null
+    private var resolvedPhotoUri: String? = null
+
     fun attachService(service: InCallService) {
         inCallService = service
     }
@@ -58,12 +64,42 @@ object CallRepository {
         refreshState()
     }
 
+    fun setPendingOutgoingCaller(number: String, callerName: String?, photoUri: String?) {
+        val key = PhoneNumberInfoHelper.canonicalKey(number)
+        if (key.isNotBlank()) {
+            pendingCanonicalKey = key
+            resolvedCallerName = callerName
+            resolvedPhotoUri = photoUri
+        }
+    }
+
+    fun updateResolvedCallerIdentity(number: String, callerName: String?, photoUri: String?) {
+        val currentNum = currentCall?.details?.handle?.schemeSpecificPart.orEmpty()
+        val currentKey = PhoneNumberInfoHelper.canonicalKey(currentNum)
+        val updateKey = PhoneNumberInfoHelper.canonicalKey(number)
+        if (updateKey.isNotBlank() && (currentKey == updateKey || pendingCanonicalKey == updateKey)) {
+            if (!callerName.isNullOrBlank()) resolvedCallerName = callerName
+            if (!photoUri.isNullOrBlank()) resolvedPhotoUri = photoUri
+            refreshState()
+        }
+    }
+
     fun setCall(call: Call?, simLabel: String?, initialState: Int? = null) {
         if (call == null) {
             stopRecordingInternal()
             activeEnteredAtMillis = 0L
+            pendingCanonicalKey = null
+            resolvedCallerName = null
+            resolvedPhotoUri = null
         } else if (call !== currentCall) {
             activeEnteredAtMillis = 0L
+            val handle = call.details?.handle?.schemeSpecificPart.orEmpty()
+            val callKey = PhoneNumberInfoHelper.canonicalKey(handle)
+            if (callKey.isBlank() || callKey != pendingCanonicalKey) {
+                pendingCanonicalKey = callKey
+                resolvedCallerName = null
+                resolvedPhotoUri = null
+            }
         }
         currentCall = call
         currentSimLabel = simLabel
@@ -81,6 +117,7 @@ object CallRepository {
         val handle = details?.handle?.schemeSpecificPart.orEmpty()
         val callerDisplay = details?.callerDisplayName?.takeIf { it.isNotBlank() }
             ?: details?.contactDisplayName?.takeIf { it.isNotBlank() }
+            ?: resolvedCallerName
 
         val state = explicitState ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             details?.state ?: Call.STATE_NEW
@@ -92,6 +129,9 @@ object CallRepository {
         if (state == Call.STATE_DISCONNECTED) {
             stopRecordingInternal()
             activeEnteredAtMillis = 0L
+            pendingCanonicalKey = null
+            resolvedCallerName = null
+            resolvedPhotoUri = null
             _activeCallState.value = null
             currentCall = null
             return
@@ -112,6 +152,7 @@ object CallRepository {
         _activeCallState.value = ActiveCallUiState(
             number = handle.ifBlank { "Unknown" },
             callerName = callerDisplay,
+            photoUri = resolvedPhotoUri,
             simLabel = currentSimLabel,
             callState = state,
             connectTimeMillis = effectiveConnectTime,
@@ -125,6 +166,25 @@ object CallRepository {
 
     fun answerCall() {
         currentCall?.answer(VideoProfile.STATE_AUDIO_ONLY)
+    }
+
+    fun rejectWithMessage(message: String): Boolean {
+        stopRecordingInternal()
+        val call = currentCall ?: return false
+        val state = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            call.details?.state ?: Call.STATE_NEW
+        } else {
+            @Suppress("DEPRECATION")
+            call.state
+        }
+        return if (state == Call.STATE_RINGING) {
+            runCatching {
+                call.reject(true, message)
+                true
+            }.getOrDefault(false)
+        } else {
+            false
+        }
     }
 
     fun rejectOrDisconnect() {

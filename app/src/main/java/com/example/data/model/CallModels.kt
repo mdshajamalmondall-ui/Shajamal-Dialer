@@ -128,7 +128,32 @@ data class OutgoingAnimationState(
     val displayName: String?,
     val simLabel: String,
     val carrierName: String,
-    val slotIndex: Int
+    val slotIndex: Int,
+    val photoUri: String? = null
+)
+
+enum class FavoriteGroup(
+    val id: String,
+    val labelEn: String,
+    val labelBn: String
+) {
+    FAMILY("family", "Family", "পরিবার"),
+    FRIENDS("friends", "Friends", "বন্ধু"),
+    OFFICE("office", "Office", "অফিস"),
+    NONE("none", "None", "কোনোটি নয়");
+
+    companion object {
+        fun fromId(id: String?): FavoriteGroup =
+            entries.firstOrNull { it.id == id } ?: NONE
+    }
+}
+
+data class CallerProfileTarget(
+    val number: String,
+    val displayTitle: String,
+    val photoUri: String?,
+    val contactId: Long?,
+    val isStarred: Boolean = false
 )
 
 data class CallAnalyticsSummary(

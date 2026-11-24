@@ -8,4 +8,5 @@ object ShajamalRoutes {
     const val SETTINGS = "settings"
     const val THEMES = "themes"
     const val BLOCK_LIST = "block_list"
+    const val CONTACT_PROFILE = "contact_profile"
 }
