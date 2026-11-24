@@ -18,6 +18,7 @@ import com.example.data.model.CallAnalyticsSummary
 import com.example.data.model.CallDirection
 import com.example.data.model.CallLogItem
 import com.example.data.model.CallPlacementResult
+import com.example.data.model.CallerIdentityReport
 import com.example.data.model.CallerProfileTarget
 import com.example.data.model.CommunitySpamReport
 import com.example.data.model.ContactItem
@@ -29,14 +30,19 @@ import com.example.data.model.GroupedCallLogItem
 import com.example.data.model.HiddenCallEntry
 import com.example.data.model.PermissionSnapshot
 import com.example.data.model.PrivateContactEntry
+import com.example.data.model.SimBalanceInfo
 import com.example.data.model.SimSlotInfo
 import com.example.data.model.SpamCategory
 import com.example.data.preferences.PrivacyVaultDataStore
 import com.example.data.preferences.SettingsDataStore
+import com.example.data.telephony.CallerIntelligenceEngine
 import com.example.data.telephony.DeviceDirectoryRepository
 import com.example.data.telephony.DualSimCallManager
 import com.example.data.telephony.PhoneNumberInfoHelper
+import com.example.data.telephony.SimBalanceManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -45,6 +51,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -66,6 +74,7 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
     private val settingsDataStore = SettingsDataStore(context)
     private val privacyVaultDataStore = PrivacyVaultDataStore(context)
     private val dualSimCallManager = DualSimCallManager(context)
+    private val simBalanceManager = SimBalanceManager(context)
     private val directoryRepository = DeviceDirectoryRepository(context, dualSimCallManager)
 
     val settings: StateFlow<DialerSettings> = settingsDataStore.settingsFlow.stateIn(
@@ -79,6 +88,15 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    val blockedCanonicalKeys: StateFlow<Set<String>> = blockedNumbers
+        .map { list ->
+            list.mapNotNull { entry ->
+                PhoneNumberInfoHelper.canonicalKey(entry.number).takeIf { it.isNotBlank() }
+            }.toSet()
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     val communityReports: StateFlow<Map<String, CommunitySpamReport>> =
         settingsDataStore.communityReportsFlow.stateIn(
@@ -135,6 +153,30 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
     private val _simSlots = MutableStateFlow<List<SimSlotInfo>>(emptyList())
     val simSlots: StateFlow<List<SimSlotInfo>> = _simSlots.asStateFlow()
 
+    private val _refreshingBalanceSlots = MutableStateFlow<Set<Int>>(emptySet())
+    val simBalances: StateFlow<List<SimBalanceInfo>> = combine(
+        _simSlots,
+        settingsDataStore.simBalancesFlow,
+        _refreshingBalanceSlots
+    ) { slots, storedMap, refreshingSlots ->
+        (0..1).map { slotIdx ->
+            val slot = slots.firstOrNull { it.slotIndex == slotIdx }
+            val stored = storedMap[slotIdx]
+            val carrier = slot?.carrierName ?: "SIM ${slotIdx + 1}"
+            val defaultCode = SimBalanceManager.defaultUssdCodeForCarrier(carrier)
+            SimBalanceInfo(
+                slotIndex = slotIdx,
+                carrierName = carrier,
+                isActive = slot?.isActive == true,
+                ussdCode = stored?.ussdCode?.takeIf { it.isNotBlank() } ?: defaultCode,
+                balanceShort = stored?.balanceShort.orEmpty(),
+                rawResponse = stored?.rawResponse.orEmpty(),
+                updatedAtMillis = stored?.updatedAtMillis ?: 0L,
+                isRefreshing = slotIdx in refreshingSlots
+            )
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     private val _isDefaultDialer = MutableStateFlow(false)
     val isDefaultDialer: StateFlow<Boolean> = _isDefaultDialer.asStateFlow()
 
@@ -159,7 +201,53 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
         _recentsSearchQuery
     ) { logs, contacts, filter, query ->
         groupAndFilterCallLogs(logs, contacts, filter, query)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentsCallerReports: StateFlow<Map<String, CallerIdentityReport>> = combine(
+        groupedCallLogs,
+        blockedNumbers,
+        communityReports,
+        privateContacts,
+        numberNotes,
+        settings
+    ) { arr ->
+        @Suppress("UNCHECKED_CAST")
+        val groups = arr[0] as List<GroupedCallLogItem>
+        @Suppress("UNCHECKED_CAST")
+        val blocked = arr[1] as List<BlockedNumberEntry>
+        @Suppress("UNCHECKED_CAST")
+        val reports = arr[2] as Map<String, CommunitySpamReport>
+        @Suppress("UNCHECKED_CAST")
+        val privates = arr[3] as List<PrivateContactEntry>
+        @Suppress("UNCHECKED_CAST")
+        val notes = arr[4] as Map<String, String>
+        val currentSettings = arr[5] as DialerSettings
+
+        buildMap(groups.size) {
+            groups.forEach { group ->
+                val canonical = PhoneNumberInfoHelper.canonicalKey(group.number)
+                val savedNote = if (canonical.isNotBlank()) notes[canonical] else null
+                val contactHint = group.displayTitle.takeIf {
+                    it != PhoneNumberInfoHelper.formatDisplayNumber(group.number) && it != group.number
+                }
+                put(
+                    group.groupKey,
+                    CallerIntelligenceEngine.evaluate(
+                        rawNumber = group.number,
+                        contactName = contactHint,
+                        photoUri = group.photoUri,
+                        note = savedNote,
+                        blockedNumbers = blocked,
+                        communityReports = reports,
+                        privateContacts = privates,
+                        settings = currentSettings
+                    )
+                )
+            }
+        }
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     val todayCallCount: StateFlow<Int> = _allCallLogs.map { logs ->
         val startOfDay = Calendar.getInstance().apply {
@@ -169,7 +257,8 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
         logs.count { it.dateMillis >= startOfDay }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val callAnalytics: StateFlow<CallAnalyticsSummary> = _allCallLogs.map { logs ->
         val incoming = logs.count { it.direction == CallDirection.INCOMING }
@@ -197,11 +286,12 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
             totalDurationSeconds = totalDuration,
             topContacts = top
         )
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        CallAnalyticsSummary(0, 0, 0, 0, 0, 0, 0L, emptyList())
-    )
+    }.flowOn(Dispatchers.Default)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            CallAnalyticsSummary(0, 0, 0, 0, 0, 0, 0L, emptyList())
+        )
 
     val filteredContacts: StateFlow<List<ContactItem>> = combine(
         _allContacts,
@@ -227,11 +317,13 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
                     contact.phoneNumbers.any { it.contains(trimmed, ignoreCase = true) }
             }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val favoriteContacts: StateFlow<List<ContactItem>> = _allContacts.map { contacts ->
         contacts.filter { it.isStarred }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val exactDialedContact: StateFlow<ContactItem?> = combine(
         _dialField,
@@ -245,7 +337,8 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
                 c.phoneNumbers.any { PhoneNumberInfoHelper.canonicalKey(it) == canonical }
             }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     private val _rawProfileTarget = MutableStateFlow<CallerProfileTarget?>(null)
     val activeProfileTarget: StateFlow<CallerProfileTarget?> = combine(
@@ -283,33 +376,135 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
     private val _permissionPromptTrigger = MutableSharedFlow<Unit>()
     val permissionPromptTrigger: SharedFlow<Unit> = _permissionPromptTrigger.asSharedFlow()
 
+    private var lastDeviceRefreshMillis = 0L
+    private var autoCheckedBalanceThisSession = false
+
     init {
-        refreshDeviceState()
+        refreshDeviceState(force = true)
     }
 
-    fun refreshDeviceState() {
-        val snapshot = PermissionSnapshot(
-            callPhone = hasPermission(Manifest.permission.CALL_PHONE),
-            readPhoneState = hasPermission(Manifest.permission.READ_PHONE_STATE),
-            readCallLog = hasPermission(Manifest.permission.READ_CALL_LOG),
-            writeCallLog = hasPermission(Manifest.permission.WRITE_CALL_LOG),
-            readContacts = hasPermission(Manifest.permission.READ_CONTACTS),
-            writeContacts = hasPermission(Manifest.permission.WRITE_CONTACTS),
-            postNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                hasPermission(Manifest.permission.POST_NOTIFICATIONS)
-            } else {
-                true
-            }
-        )
-        _permissions.value = snapshot
-        _isDefaultDialer.value = dualSimCallManager.isDefaultDialer()
-
-        val slots = dualSimCallManager.loadSimSlots()
-        _simSlots.value = slots
+    fun refreshDeviceState(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastDeviceRefreshMillis < 1500L) return
+        lastDeviceRefreshMillis = now
 
         viewModelScope.launch {
-            _allCallLogs.value = directoryRepository.loadCallLogs(slots, limit = 400)
-            _allContacts.value = directoryRepository.loadContacts()
+            val (snapshot, defaultDialer, slots) = withContext(Dispatchers.IO) {
+                val permSnapshot = PermissionSnapshot(
+                    callPhone = hasPermission(Manifest.permission.CALL_PHONE),
+                    readPhoneState = hasPermission(Manifest.permission.READ_PHONE_STATE),
+                    readCallLog = hasPermission(Manifest.permission.READ_CALL_LOG),
+                    writeCallLog = hasPermission(Manifest.permission.WRITE_CALL_LOG),
+                    readContacts = hasPermission(Manifest.permission.READ_CONTACTS),
+                    writeContacts = hasPermission(Manifest.permission.WRITE_CONTACTS),
+                    postNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    } else {
+                        true
+                    }
+                )
+                Triple(
+                    permSnapshot,
+                    dualSimCallManager.isDefaultDialer(),
+                    dualSimCallManager.loadSimSlots()
+                )
+            }
+
+            _permissions.value = snapshot
+            _isDefaultDialer.value = defaultDialer
+            _simSlots.value = slots
+
+            coroutineScope {
+                val logsDeferred = async { directoryRepository.loadCallLogs(slots, limit = 300) }
+                val contactsDeferred = async { directoryRepository.loadContacts() }
+                _allCallLogs.value = logsDeferred.await()
+                _allContacts.value = contactsDeferred.await()
+            }
+
+            if (!autoCheckedBalanceThisSession && snapshot.hasCoreDialerPermissions) {
+                autoCheckedBalanceThisSession = true
+                autoRefreshStaleSimBalances(slots)
+            }
+        }
+    }
+
+    private fun autoRefreshStaleSimBalances(slots: List<SimSlotInfo>) {
+        viewModelScope.launch {
+            val storedMap = settingsDataStore.simBalancesFlow.first()
+            val now = System.currentTimeMillis()
+            val staleThresholdMs = 30L * 60L * 1000L
+            slots.filter { it.isActive }.forEach { slot ->
+                val stored = storedMap[slot.slotIndex]
+                val updatedAt = stored?.updatedAtMillis ?: 0L
+                if (now - updatedAt > staleThresholdMs) {
+                    refreshSimBalance(slot.slotIndex, silent = true)
+                }
+            }
+        }
+    }
+
+    fun refreshSimBalance(slotIndex: Int, silent: Boolean = false) {
+        val slot = _simSlots.value.firstOrNull { it.slotIndex == slotIndex }
+        if (slot == null || !slot.isActive) {
+            if (!silent) emitMessage("SIM ${slotIndex + 1} is not active")
+            return
+        }
+        if (!_permissions.value.hasCoreDialerPermissions) {
+            if (!silent) {
+                emitMessage("Grant Phone permission to check SIM balance")
+                viewModelScope.launch { _permissionPromptTrigger.emit(Unit) }
+            }
+            return
+        }
+        if (slotIndex in _refreshingBalanceSlots.value) return
+
+        viewModelScope.launch {
+            _refreshingBalanceSlots.value = _refreshingBalanceSlots.value + slotIndex
+            try {
+                val storedMap = settingsDataStore.simBalancesFlow.first()
+                val ussdCode = storedMap[slotIndex]?.ussdCode?.takeIf { it.isNotBlank() }
+                    ?: SimBalanceManager.defaultUssdCodeForCarrier(slot.carrierName)
+
+                val result = withContext(Dispatchers.IO) {
+                    simBalanceManager.fetchSimBalance(slot, ussdCode)
+                }
+                result.onSuccess { (shortText, rawText) ->
+                    settingsDataStore.saveSimBalanceResult(slotIndex, shortText, rawText)
+                    if (!silent) {
+                        emitMessage("SIM ${slotIndex + 1}: ${shortText.ifBlank { rawText }}")
+                    }
+                }.onFailure { err ->
+                    if (!silent) {
+                        emitMessage(err.message ?: "Unable to fetch SIM ${slotIndex + 1} balance via USSD")
+                    }
+                }
+            } finally {
+                _refreshingBalanceSlots.value = _refreshingBalanceSlots.value - slotIndex
+            }
+        }
+    }
+
+    fun updateSimUssdCode(slotIndex: Int, code: String) {
+        viewModelScope.launch {
+            settingsDataStore.saveSimUssdCode(slotIndex, code)
+            emitMessage("SIM ${slotIndex + 1} USSD code updated")
+        }
+    }
+
+    fun dialSimUssd(slotIndex: Int) {
+        val slot = _simSlots.value.firstOrNull { it.slotIndex == slotIndex }
+        if (!_permissions.value.hasCoreDialerPermissions) {
+            viewModelScope.launch { _permissionPromptTrigger.emit(Unit) }
+            return
+        }
+        viewModelScope.launch {
+            val storedMap = settingsDataStore.simBalancesFlow.first()
+            val code = storedMap[slotIndex]?.ussdCode?.takeIf { it.isNotBlank() }
+                ?: SimBalanceManager.defaultUssdCodeForCarrier(slot?.carrierName.orEmpty())
+            val launched = simBalanceManager.dialUssdFallback(slot, code)
+            if (!launched) {
+                emitMessage("Unable to dial $code")
+            }
         }
     }
 

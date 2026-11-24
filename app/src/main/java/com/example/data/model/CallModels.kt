@@ -18,6 +18,17 @@ data class SimSlotInfo(
         get() = if (carrierName.isNotBlank()) "$label · $carrierName" else label
 }
 
+data class SimBalanceInfo(
+    val slotIndex: Int,
+    val carrierName: String,
+    val isActive: Boolean,
+    val ussdCode: String,
+    val balanceShort: String = "",
+    val rawResponse: String = "",
+    val updatedAtMillis: Long = 0L,
+    val isRefreshing: Boolean = false
+)
+
 enum class CallDirection {
     INCOMING,
     OUTGOING,

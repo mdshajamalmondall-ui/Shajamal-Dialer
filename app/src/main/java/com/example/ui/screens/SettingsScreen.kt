@@ -8,7 +8,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -42,7 +41,6 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.SimCard
 import androidx.compose.material.icons.rounded.Stop
@@ -68,11 +66,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.data.model.AppLanguage
 import com.example.data.model.DialerSettings
 import com.example.data.model.DoodleDesign
@@ -107,7 +105,6 @@ fun SettingsScreen(
     onResetSimRingtone: (Int) -> Unit,
     onRequestDefaultDialer: () -> Unit,
     onRequestPermissions: () -> Unit,
-    onRefreshSims: () -> Unit,
     onToggleDualSimMode: (DualSimMode) -> Unit,
     onToggleDtmfTones: (Boolean) -> Unit,
     onToggleHapticFeedback: (Boolean) -> Unit,
@@ -714,80 +711,6 @@ fun SettingsScreen(
             }
         }
 
-        // Dual SIM Hardware Inspector
-        item {
-            Surface(
-                shape = RoundedCornerShape(22.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = strings.dualSimStatusTitle,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        IconButton(onClick = onRefreshSims) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "Refresh SIM slots",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-
-                    simSlots.forEach { slot ->
-                        val accent = if (slot.slotIndex == 0) activeTheme.sim1Accent else activeTheme.sim2Accent
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                            border = BorderStroke(1.dp, accent.copy(alpha = 0.4f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.SimCard,
-                                    contentDescription = null,
-                                    tint = accent,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "${slot.label} · ${slot.carrierName}",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = if (slot.phoneAccountHandle != null) {
-                                            "Slot ${slot.slotIndex + 1} Bound (Sub ID: ${slot.subscriptionId})"
-                                        } else {
-                                            "No active SIM detected on Slot ${slot.slotIndex + 1}"
-                                        },
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Dialer Behavior Settings
         item {
             Surface(
@@ -991,12 +914,16 @@ private fun QuickThemeThumb(
             .testTag("settings_theme_thumb_${theme.id}")
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
+            val context = LocalContext.current
             when {
                 theme.id == ThemeCatalog.ID_CUSTOM_PHOTO && !customImagePath.isNullOrBlank() -> {
-                    val file = File(customImagePath)
-                    if (file.exists()) {
+                    val file = remember(customImagePath) { File(customImagePath).takeIf { it.exists() } }
+                    if (file != null) {
+                        val request = remember(file) {
+                            ImageRequest.Builder(context).data(file).size(180).crossfade(false).build()
+                        }
                         AsyncImage(
-                            model = file,
+                            model = request,
                             contentDescription = label,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
@@ -1004,8 +931,11 @@ private fun QuickThemeThumb(
                     }
                 }
                 theme.backgroundRes != null -> {
-                    Image(
-                        painter = painterResource(id = theme.backgroundRes),
+                    val request = remember(theme.backgroundRes) {
+                        ImageRequest.Builder(context).data(theme.backgroundRes).size(180).crossfade(false).build()
+                    }
+                    AsyncImage(
+                        model = request,
                         contentDescription = label,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()

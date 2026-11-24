@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.data.model.ContactItem
 import com.example.data.model.PermissionSnapshot
 import com.example.ui.theme.JetBrainsMonoFontFamily
@@ -161,7 +162,7 @@ fun ContactsScreen(
                     contentPadding = PaddingValues(bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(contacts, key = { it.id }) { contact ->
+                    items(contacts, key = { it.id }, contentType = { "contact_card" }) { contact ->
                         ContactCard(
                             contact = contact,
                             onClick = { selectedContact = contact }
@@ -405,8 +406,12 @@ private fun ContactAvatar(
         modifier = Modifier.size(size)
     ) {
         if (!photoUri.isNullOrBlank()) {
+            val context = LocalContext.current
+            val request = remember(photoUri) {
+                ImageRequest.Builder(context).data(photoUri).size(128).crossfade(false).build()
+            }
             AsyncImage(
-                model = photoUri,
+                model = request,
                 contentDescription = name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

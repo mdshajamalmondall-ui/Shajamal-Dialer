@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -23,6 +24,7 @@ import com.example.data.model.SpamCategory
 import com.example.data.security.SecurityCryptoManager
 import com.example.data.telephony.DualSimCallManager
 import com.example.data.telephony.PhoneNumberInfoHelper
+import com.example.data.telephony.StoredSimBalance
 import com.example.ui.theme.ThemeCatalog
 import org.json.JSONArray
 import org.json.JSONObject
@@ -67,6 +69,14 @@ class SettingsDataStore(private val context: Context) {
         val SECURITY_PIN_HASH = stringPreferencesKey("security_pin_hash")
         val SECURITY_PIN_SALT = stringPreferencesKey("security_pin_salt")
         val COMMUNITY_SPAM_REPORTS_JSON = stringPreferencesKey("community_spam_reports_json")
+        val SIM1_USSD_CODE = stringPreferencesKey("sim1_ussd_code")
+        val SIM1_BALANCE_SHORT = stringPreferencesKey("sim1_balance_short")
+        val SIM1_BALANCE_RAW = stringPreferencesKey("sim1_balance_raw")
+        val SIM1_BALANCE_TS = longPreferencesKey("sim1_balance_ts")
+        val SIM2_USSD_CODE = stringPreferencesKey("sim2_ussd_code")
+        val SIM2_BALANCE_SHORT = stringPreferencesKey("sim2_balance_short")
+        val SIM2_BALANCE_RAW = stringPreferencesKey("sim2_balance_raw")
+        val SIM2_BALANCE_TS = longPreferencesKey("sim2_balance_ts")
     }
 
     val settingsFlow: Flow<DialerSettings> = context.settingsDataStore.data.map { prefs ->
@@ -110,6 +120,23 @@ class SettingsDataStore(private val context: Context) {
 
     val communityReportsFlow: Flow<Map<String, CommunitySpamReport>> = context.settingsDataStore.data.map { prefs ->
         parseCommunityReportsJson(prefs[Keys.COMMUNITY_SPAM_REPORTS_JSON].orEmpty())
+    }
+
+    val simBalancesFlow: Flow<Map<Int, StoredSimBalance>> = context.settingsDataStore.data.map { prefs ->
+        mapOf(
+            0 to StoredSimBalance(
+                ussdCode = prefs[Keys.SIM1_USSD_CODE].orEmpty(),
+                balanceShort = prefs[Keys.SIM1_BALANCE_SHORT].orEmpty(),
+                rawResponse = prefs[Keys.SIM1_BALANCE_RAW].orEmpty(),
+                updatedAtMillis = prefs[Keys.SIM1_BALANCE_TS] ?: 0L
+            ),
+            1 to StoredSimBalance(
+                ussdCode = prefs[Keys.SIM2_USSD_CODE].orEmpty(),
+                balanceShort = prefs[Keys.SIM2_BALANCE_SHORT].orEmpty(),
+                rawResponse = prefs[Keys.SIM2_BALANCE_RAW].orEmpty(),
+                updatedAtMillis = prefs[Keys.SIM2_BALANCE_TS] ?: 0L
+            )
+        )
     }
 
     val blockedNumbersFlow: Flow<List<BlockedNumberEntry>> = context.settingsDataStore.data.map { prefs ->
@@ -445,6 +472,32 @@ class SettingsDataStore(private val context: Context) {
                 current.add("$canonical|${group.id}")
             }
             prefs[Keys.NUMBER_GROUPS] = current
+        }
+    }
+
+    suspend fun saveSimBalanceResult(slotIndex: Int, balanceShort: String, rawResponse: String) {
+        val now = System.currentTimeMillis()
+        context.settingsDataStore.edit { prefs ->
+            if (slotIndex == 0) {
+                prefs[Keys.SIM1_BALANCE_SHORT] = balanceShort
+                prefs[Keys.SIM1_BALANCE_RAW] = rawResponse
+                prefs[Keys.SIM1_BALANCE_TS] = now
+            } else {
+                prefs[Keys.SIM2_BALANCE_SHORT] = balanceShort
+                prefs[Keys.SIM2_BALANCE_RAW] = rawResponse
+                prefs[Keys.SIM2_BALANCE_TS] = now
+            }
+        }
+    }
+
+    suspend fun saveSimUssdCode(slotIndex: Int, ussdCode: String) {
+        val cleaned = ussdCode.trim()
+        context.settingsDataStore.edit { prefs ->
+            if (slotIndex == 0) {
+                prefs[Keys.SIM1_USSD_CODE] = cleaned
+            } else {
+                prefs[Keys.SIM2_USSD_CODE] = cleaned
+            }
         }
     }
 

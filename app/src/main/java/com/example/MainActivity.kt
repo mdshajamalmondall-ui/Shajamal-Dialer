@@ -11,6 +11,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -135,6 +138,7 @@ private fun ShajamalApp(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
+    val blockedCanonicalKeys by viewModel.blockedCanonicalKeys.collectAsStateWithLifecycle()
     val communityReports by viewModel.communityReports.collectAsStateWithLifecycle()
     val privateContacts by viewModel.privateContacts.collectAsStateWithLifecycle()
     val hiddenCalls by viewModel.hiddenCalls.collectAsStateWithLifecycle()
@@ -145,9 +149,11 @@ private fun ShajamalApp(
     val activeProfileTarget by viewModel.activeProfileTarget.collectAsStateWithLifecycle()
     val dialField by viewModel.dialField.collectAsStateWithLifecycle()
     val simSlots by viewModel.simSlots.collectAsStateWithLifecycle()
+    val simBalances by viewModel.simBalances.collectAsStateWithLifecycle()
     val isDefaultDialer by viewModel.isDefaultDialer.collectAsStateWithLifecycle()
     val permissions by viewModel.permissions.collectAsStateWithLifecycle()
     val groupedCallLogs by viewModel.groupedCallLogs.collectAsStateWithLifecycle()
+    val recentsCallerReports by viewModel.recentsCallerReports.collectAsStateWithLifecycle()
     val todayCallCount by viewModel.todayCallCount.collectAsStateWithLifecycle()
     val recentsSearchQuery by viewModel.recentsSearchQuery.collectAsStateWithLifecycle()
     val callAnalytics by viewModel.callAnalytics.collectAsStateWithLifecycle()
@@ -184,17 +190,17 @@ private fun ShajamalApp(
     val permissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        viewModel.refreshDeviceState()
+        viewModel.refreshDeviceState(force = true)
     }
 
     val defaultDialerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
-        viewModel.refreshDeviceState()
+        viewModel.refreshDeviceState(force = true)
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        viewModel.refreshDeviceState()
+        viewModel.refreshDeviceState(force = false)
     }
 
     LaunchedEffect(Unit) {
@@ -367,7 +373,11 @@ private fun ShajamalApp(
                         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                             NavHost(
                                 navController = navController,
-                                startDestination = initialRoute
+                                startDestination = initialRoute,
+                                enterTransition = { fadeIn(animationSpec = tween(130)) },
+                                exitTransition = { fadeOut(animationSpec = tween(90)) },
+                                popEnterTransition = { fadeIn(animationSpec = tween(130)) },
+                                popExitTransition = { fadeOut(animationSpec = tween(90)) }
                             ) {
                                 composable(ShajamalRoutes.RECENTS) {
                                     RecentsScreen(
@@ -382,6 +392,9 @@ private fun ShajamalApp(
                                         settings = settings,
                                         communityReports = communityReports,
                                         privateContacts = privateContacts,
+                                        simBalances = simBalances,
+                                        blockedCanonicalKeys = blockedCanonicalKeys,
+                                        callerReports = recentsCallerReports,
                                         onSelectFilter = viewModel::setCallLogFilter,
                                         onSearchQueryChange = viewModel::setRecentsSearchQuery,
                                         onCallChooseSim = viewModel::openSimPickerForNumber,
@@ -399,6 +412,11 @@ private fun ShajamalApp(
                                             }
                                         },
                                         onSubmitSpamReport = viewModel::reportSpamNumber,
+                                        onRefreshSimBalance = { slotIdx ->
+                                            viewModel.refreshSimBalance(slotIdx, silent = false)
+                                        },
+                                        onUpdateSimUssdCode = viewModel::updateSimUssdCode,
+                                        onDialSimUssd = viewModel::dialSimUssd,
                                         onDeleteEntry = viewModel::deleteCallLogItem,
                                         onDeleteMultiple = viewModel::deleteMultipleCallLogs,
                                         onOpenFullProfile = { group ->
@@ -544,7 +562,6 @@ private fun ShajamalApp(
                                             onRequestPermissions = {
                                                 permissionsLauncher.launch(requiredPermissions)
                                             },
-                                            onRefreshSims = viewModel::refreshDeviceState,
                                             onToggleDualSimMode = viewModel::setDualSimMode,
                                             onToggleDtmfTones = viewModel::setDtmfTonesEnabled,
                                             onToggleHapticFeedback = viewModel::setHapticFeedbackEnabled,

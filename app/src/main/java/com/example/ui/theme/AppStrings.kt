@@ -205,7 +205,15 @@ data class AppStrings(
     val unlockSettingsPrompt: String,
     val unlockAppPrompt: String,
     val incomingCallHeader: String,
-    val protectionScoreLabel: String
+    val protectionScoreLabel: String,
+    val simBalancePillDefault: String,
+    val simBalanceTitle: String,
+    val simBalanceSubtitle: String,
+    val checkBalanceButton: String,
+    val checkingBalanceLabel: String,
+    val dialUssdButton: String,
+    val ussdCodeLabel: String,
+    val balanceNotCheckedYet: String
 )
 
 val EnglishStrings = AppStrings(
@@ -410,7 +418,15 @@ val EnglishStrings = AppStrings(
     unlockSettingsPrompt = "Verify Fingerprint or PIN to access Settings",
     unlockAppPrompt = "Shajamal App Lock",
     incomingCallHeader = "Incoming Call",
-    protectionScoreLabel = "Protection Score"
+    protectionScoreLabel = "Protection Score",
+    simBalancePillDefault = "SIM Bal",
+    simBalanceTitle = "SIM Account Balance",
+    simBalanceSubtitle = "Live balance checked directly via carrier USSD",
+    checkBalanceButton = "Check Balance",
+    checkingBalanceLabel = "Checking...",
+    dialUssdButton = "Dial USSD",
+    ussdCodeLabel = "Balance USSD Code",
+    balanceNotCheckedYet = "Tap Check Balance to fetch live amount"
 )
 
 val BengaliStrings = AppStrings(
@@ -615,7 +631,15 @@ val BengaliStrings = AppStrings(
     unlockSettingsPrompt = "সেটিংসে প্রবেশ করতে ফিঙ্গারপ্রিন্ট বা পিন দিন",
     unlockAppPrompt = "Shajamal অ্যাপ লক",
     incomingCallHeader = "ইনকামিং কল",
-    protectionScoreLabel = "নিরাপত্তা স্কোর"
+    protectionScoreLabel = "নিরাপত্তা স্কোর",
+    simBalancePillDefault = "সিম ব্যালেন্স",
+    simBalanceTitle = "সিম ব্যালেন্স",
+    simBalanceSubtitle = "অপারেটর USSD দিয়ে লাইভ ব্যালেন্স দেখুন",
+    checkBalanceButton = "ব্যালেন্স চেক",
+    checkingBalanceLabel = "চেক হচ্ছে...",
+    dialUssdButton = "ডায়াল USSD",
+    ussdCodeLabel = "ব্যালেন্স USSD কোড",
+    balanceNotCheckedYet = "লাইভ ব্যালেন্স দেখতে ব্যালেন্স চেক চাপুন"
 )
 
 fun stringsFor(language: AppLanguage): AppStrings =

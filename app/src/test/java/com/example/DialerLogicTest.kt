@@ -14,6 +14,7 @@ import com.example.data.telephony.CallerIntelligenceEngine
 import com.example.data.telephony.DeviceDirectoryRepository
 import com.example.data.telephony.DualSimCallManager
 import com.example.data.telephony.PhoneNumberInfoHelper
+import com.example.data.telephony.SimBalanceManager
 import com.example.ui.CallLogFilter
 import com.example.ui.ShajamalViewModel
 import org.junit.Assert.assertEquals
@@ -235,5 +236,27 @@ class DialerLogicTest {
         assertTrue(masked.formattedNumber.contains("••••"))
         assertNull(masked.photoUri)
         assertFalse(masked.displayName.contains("Secret"))
+    }
+
+    @Test
+    fun `simBalanceManager detects carrier USSD codes and extracts live currency balance`() {
+        assertEquals("*566#", SimBalanceManager.defaultUssdCodeForCarrier("Grameenphone"))
+        assertEquals("*124#", SimBalanceManager.defaultUssdCodeForCarrier("Banglalink"))
+        assertEquals("*222#", SimBalanceManager.defaultUssdCodeForCarrier("Robi"))
+        assertEquals("*778#", SimBalanceManager.defaultUssdCodeForCarrier("Airtel"))
+        assertEquals("*152#", SimBalanceManager.defaultUssdCodeForCarrier("Teletalk"))
+
+        assertEquals(
+            "৳45.20",
+            SimBalanceManager.extractBalanceShort("Your main account balance is Tk 45.20 valid till 25 Dec")
+        )
+        assertEquals(
+            "৳120.50",
+            SimBalanceManager.extractBalanceShort("Balance: 120.50 Tk. Dial *121# for offers.")
+        )
+        assertEquals(
+            "$14.80",
+            SimBalanceManager.extractBalanceShort("Account balance is $14.80")
+        )
     }
 }
