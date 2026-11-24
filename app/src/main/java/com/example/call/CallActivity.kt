@@ -147,7 +147,8 @@ class CallActivity : ComponentActivity() {
         val privacyVaultDataStore = PrivacyVaultDataStore(applicationContext)
 
         setContent {
-            val settings by settingsDataStore.settingsFlow.collectAsState(initial = DialerSettings())
+            val initialSettings = remember { settingsDataStore.getFastSettings() }
+            val settings by settingsDataStore.settingsFlow.collectAsState(initial = initialSettings)
             val blockedNumbers by settingsDataStore.blockedNumbersFlow.collectAsState(initial = emptyList())
             val communityReports by settingsDataStore.communityReportsFlow.collectAsState(initial = emptyMap())
             val numberNotes by settingsDataStore.numberNotesFlow.collectAsState(initial = emptyMap())
@@ -376,7 +377,9 @@ private fun InCallScreen(
                     textAlign = TextAlign.Center
                 )
 
-                if (showCallerIdPill) {
+                val hideStandardSavedContactPill =
+                    callerReport.status == CallerTrustStatus.VERIFIED_CONTACT && !callerReport.isPrivate
+                if (showCallerIdPill && !hideStandardSavedContactPill) {
                     Spacer(Modifier.height(10.dp))
                     val pillColor = when (callerReport.status) {
                         CallerTrustStatus.VERIFIED_BUSINESS, CallerTrustStatus.VERIFIED_CONTACT -> Color(0xFF22C55E)

@@ -51,10 +51,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -131,12 +134,17 @@ fun DialerScreen(
 
     var showNoteDialog by remember { mutableStateOf(false) }
 
-    val toneGenerator = remember {
-        runCatching { ToneGenerator(AudioManager.STREAM_DTMF, 65) }.getOrNull()
+    var toneGenerator by remember { mutableStateOf<ToneGenerator?>(null) }
+    LaunchedEffect(Unit) {
+        val created = withContext(Dispatchers.IO) {
+            runCatching { ToneGenerator(AudioManager.STREAM_DTMF, 65) }.getOrNull()
+        }
+        toneGenerator = created
     }
     DisposableEffect(Unit) {
         onDispose {
             runCatching { toneGenerator?.release() }
+            toneGenerator = null
         }
     }
 
@@ -149,7 +157,8 @@ fun DialerScreen(
             }
             view.performHapticFeedback(flag)
         }
-        if (settings.dtmfTonesEnabled && toneGenerator != null) {
+        val activeToneGen = toneGenerator
+        if (settings.dtmfTonesEnabled && activeToneGen != null) {
             val tone = when (ch) {
                 '0' -> ToneGenerator.TONE_DTMF_0
                 '1' -> ToneGenerator.TONE_DTMF_1
@@ -166,7 +175,7 @@ fun DialerScreen(
                 else -> -1
             }
             if (tone >= 0) {
-                runCatching { toneGenerator.startTone(tone, 90) }
+                runCatching { activeToneGen.startTone(tone, 90) }
             }
         }
     }

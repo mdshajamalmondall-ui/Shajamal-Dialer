@@ -35,19 +35,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.CallMade
 import androidx.compose.material.icons.automirrored.rounded.CallMissed
 import androidx.compose.material.icons.automirrored.rounded.CallReceived
-import androidx.compose.material.icons.rounded.AccountBalanceWallet
 import androidx.compose.material.icons.rounded.Analytics
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Call
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Dialpad
-import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ReportProblem
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Security
@@ -108,7 +104,6 @@ import com.example.data.model.DialerSettings
 import com.example.data.model.GroupedCallLogItem
 import com.example.data.model.PermissionSnapshot
 import com.example.data.model.PrivateContactEntry
-import com.example.data.model.SimBalanceInfo
 import com.example.data.model.SpamCategory
 import com.example.data.telephony.CallerIntelligenceEngine
 import com.example.data.telephony.PhoneNumberInfoHelper
@@ -147,7 +142,6 @@ fun RecentsScreen(
     settings: DialerSettings = DialerSettings(),
     communityReports: Map<String, CommunitySpamReport> = emptyMap(),
     privateContacts: List<PrivateContactEntry> = emptyList(),
-    simBalances: List<SimBalanceInfo> = emptyList(),
     blockedCanonicalKeys: Set<String> = emptySet(),
     callerReports: Map<String, CallerIdentityReport> = emptyMap(),
     onSelectFilter: (CallLogFilter) -> Unit,
@@ -158,9 +152,6 @@ fun RecentsScreen(
     onSaveNote: (String, String) -> Unit,
     onToggleBlock: (String, Boolean) -> Unit,
     onSubmitSpamReport: (String, SpamCategory, String, Boolean) -> Unit = { _, _, _, _ -> },
-    onRefreshSimBalance: (Int) -> Unit = {},
-    onUpdateSimUssdCode: (Int, String) -> Unit = { _, _ -> },
-    onDialSimUssd: (Int) -> Unit = {},
     onDeleteEntry: (Long) -> Unit,
     onDeleteMultiple: (Set<Long>) -> Unit,
     onOpenFullProfile: (GroupedCallLogItem) -> Unit,
@@ -171,7 +162,6 @@ fun RecentsScreen(
 ) {
     val strings = LocalAppStrings.current
 
-    var showSimBalanceSheet by remember { mutableStateOf(false) }
     var showAnalysisSheet by remember { mutableStateOf(false) }
 
     var activeHistoryGroupKey by remember { mutableStateOf<String?>(null) }
@@ -195,27 +185,12 @@ fun RecentsScreen(
         return canonical.isNotBlank() && canonical in effectiveBlockedKeys
     }
 
-    val anyRefreshingBalance = remember(simBalances) { simBalances.any { it.isRefreshing } }
-    val balancePillText = remember(simBalances, strings) {
-        val withBalance = simBalances.filter { it.balanceShort.isNotBlank() }
-        val activeCount = simBalances.count { it.isActive }.coerceAtLeast(1)
-        when {
-            withBalance.size >= 2 -> "${withBalance[0].balanceShort} • ${withBalance[1].balanceShort}"
-            withBalance.size == 1 -> {
-                val entry = withBalance.first()
-                if (activeCount > 1) "S${entry.slotIndex + 1} ${entry.balanceShort}" else entry.balanceShort
-            }
-            anyRefreshingBalance -> strings.checkingBalanceLabel
-            else -> strings.simBalancePillDefault
-        }
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp)
     ) {
-        // Top Bar: Always-visible SIM Balance | [All / Missed] | Analysis + Settings
+        // Top Bar: [All / Missed] | Analysis + Settings
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -223,47 +198,6 @@ fun RecentsScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = Color(0xFF16A34A).copy(alpha = 0.13f),
-                border = BorderStroke(1.dp, Color(0xFF16A34A).copy(alpha = 0.40f)),
-                modifier = Modifier
-                    .widthIn(max = 148.dp)
-                    .clip(RoundedCornerShape(50))
-                    .clickable { showSimBalanceSheet = true }
-                    .testTag("recents_sim_balance_button")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (anyRefreshingBalance) {
-                        CircularProgressIndicator(
-                            strokeWidth = 2.dp,
-                            color = Color(0xFF15803D),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Rounded.AccountBalanceWallet,
-                            contentDescription = strings.simBalanceTitle,
-                            tint = Color(0xFF15803D),
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = balancePillText,
-                        fontFamily = JetBrainsMonoFontFamily,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF15803D),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
             // Segmented [All | Missed] pill
             Surface(
                 shape = RoundedCornerShape(50),
@@ -674,21 +608,6 @@ fun RecentsScreen(
             containerColor = MaterialTheme.colorScheme.surface
         ) {
             CallAnalysisSheet(analytics = analytics)
-        }
-    }
-
-    // SIM Balance Sheet
-    if (showSimBalanceSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showSimBalanceSheet = false },
-            containerColor = MaterialTheme.colorScheme.surface
-        ) {
-            SimBalanceSheet(
-                simBalances = simBalances,
-                onRefreshSim = onRefreshSimBalance,
-                onUpdateUssdCode = onUpdateSimUssdCode,
-                onDialUssd = onDialSimUssd
-            )
         }
     }
 }
@@ -1534,197 +1453,6 @@ private fun CallAnalysisSheet(analytics: CallAnalyticsSummary) {
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
                         )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SimBalanceSheet(
-    simBalances: List<SimBalanceInfo>,
-    onRefreshSim: (Int) -> Unit,
-    onUpdateUssdCode: (Int, String) -> Unit,
-    onDialUssd: (Int) -> Unit
-) {
-    val strings = LocalAppStrings.current
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 10.dp)
-            .padding(bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text(
-            text = strings.simBalanceTitle,
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Text(
-            text = strings.simBalanceSubtitle,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        simBalances.forEach { info ->
-            val accent = if (info.slotIndex == 0) Color(0xFF16A34A) else Color(0xFF2563EB)
-            var editingCode by remember(info.slotIndex) { mutableStateOf(false) }
-            var ussdInput by remember(info.slotIndex, info.ussdCode) { mutableStateOf(info.ussdCode) }
-
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                border = BorderStroke(1.dp, accent.copy(alpha = 0.42f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Rounded.SimCard,
-                                contentDescription = null,
-                                tint = accent,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "SIM ${info.slotIndex + 1} · ${info.carrierName}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        Text(
-                            text = info.balanceShort.ifBlank { "--" },
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accent
-                        )
-                    }
-
-                    Text(
-                        text = info.rawResponse.ifBlank { strings.balanceNotCheckedYet },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    if (info.updatedAtMillis > 0L) {
-                        val rel = remember(info.updatedAtMillis) {
-                            DateUtils.getRelativeTimeSpanString(
-                                info.updatedAtMillis,
-                                System.currentTimeMillis(),
-                                DateUtils.MINUTE_IN_MILLIS,
-                                DateUtils.FORMAT_ABBREV_RELATIVE
-                            ).toString()
-                        }
-                        Text(
-                            text = rel,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    if (editingCode) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = ussdInput,
-                                onValueChange = { ussdInput = it },
-                                label = { Text(strings.ussdCodeLabel) },
-                                singleLine = true,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = {
-                                    onUpdateUssdCode(info.slotIndex, ussdInput)
-                                    editingCode = false
-                                }
-                            ) {
-                                Icon(Icons.Rounded.Check, contentDescription = strings.save, tint = accent)
-                            }
-                        }
-                    } else {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "${strings.ussdCodeLabel}: ${info.ussdCode}",
-                                fontFamily = JetBrainsMonoFontFamily,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            IconButton(
-                                onClick = { editingCode = true },
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Edit,
-                                    contentDescription = strings.edit,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = { onRefreshSim(info.slotIndex) },
-                            enabled = info.isActive && !info.isRefreshing,
-                            colors = ButtonDefaults.buttonColors(containerColor = accent),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            if (info.isRefreshing) {
-                                CircularProgressIndicator(
-                                    strokeWidth = 2.dp,
-                                    color = Color.White,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Rounded.Refresh,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = if (info.isRefreshing) strings.checkingBalanceLabel else strings.checkBalanceButton,
-                                color = Color.White
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = { onDialUssd(info.slotIndex) },
-                            enabled = info.isActive,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Dialpad,
-                                contentDescription = null,
-                                tint = accent,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(strings.dialUssdButton, color = MaterialTheme.colorScheme.onSurface)
-                        }
                     }
                 }
             }

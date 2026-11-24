@@ -1,6 +1,7 @@
 package com.example.ui.navigation
 
 object ShajamalRoutes {
+    const val MAIN_TABS = "main_tabs"
     const val RECENTS = "recents"
     const val KEYPAD = "keypad"
     const val CONTACTS = "contacts"

@@ -511,11 +511,6 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
                     runCatching { settingsDataStore.cacheRecentCallLogs(freshLogs, freshContacts) }
                 }
             }
-
-            if (!autoCheckedBalanceThisSession && resolvedSnapshot.hasCoreDialerPermissions) {
-                autoCheckedBalanceThisSession = true
-                autoRefreshStaleSimBalances(resolvedSlots)
-            }
         }
     }
 

@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -47,11 +48,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -59,10 +64,10 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -167,8 +172,20 @@ private fun ShajamalApp(
     val activeTheme = ThemeCatalog.byId(settings.selectedThemeId)
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route ?: initialRoute
+    val currentNavRoute = navBackStackEntry?.destination?.route ?: ShajamalRoutes.MAIN_TABS
+    var activeMainTab by rememberSaveable { mutableStateOf(initialRoute) }
+    var visitedTabs by remember { mutableStateOf(setOf(initialRoute)) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(Unit) {
+        delay(350L)
+        visitedTabs = setOf(
+            ShajamalRoutes.RECENTS,
+            ShajamalRoutes.KEYPAD,
+            ShajamalRoutes.CONTACTS,
+            ShajamalRoutes.FAVORITES
+        )
+    }
 
     val requiredPermissions = remember {
         buildList {
@@ -216,20 +233,20 @@ private fun ShajamalApp(
     }
 
     fun navigateTopLevel(route: String) {
-        navController.navigate(route) {
-            popUpTo(navController.graph.findStartDestination().id) {
-                saveState = true
-            }
-            launchSingleTop = true
-            restoreState = true
+        visitedTabs = visitedTabs + route
+        activeMainTab = route
+        if (navController.currentDestination?.route != ShajamalRoutes.MAIN_TABS) {
+            navController.popBackStack(ShajamalRoutes.MAIN_TABS, inclusive = false)
         }
+    }
+
+    BackHandler(enabled = currentNavRoute == ShajamalRoutes.MAIN_TABS && activeMainTab != ShajamalRoutes.RECENTS) {
+        activeMainTab = ShajamalRoutes.RECENTS
     }
 
     LaunchedEffect(launchNavigationTarget) {
         val target = launchNavigationTarget?.first ?: return@LaunchedEffect
-        if (navController.currentDestination?.route != target) {
-            navigateTopLevel(target)
-        }
+        navigateTopLevel(target)
     }
 
     fun requestDefaultDialer() {
@@ -310,14 +327,7 @@ private fun ShajamalApp(
         ) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val useNavRail = maxWidth >= 700.dp
-                val showChrome = currentRoute != ShajamalRoutes.SETTINGS &&
-                    currentRoute != ShajamalRoutes.THEMES &&
-                    currentRoute != ShajamalRoutes.BLOCK_LIST &&
-                    currentRoute != ShajamalRoutes.CONTACT_PROFILE &&
-                    currentRoute != ShajamalRoutes.PRIVACY_DASHBOARD &&
-                    currentRoute != ShajamalRoutes.PRIVATE_CONTACTS &&
-                    currentRoute != ShajamalRoutes.HIDDEN_HISTORY &&
-                    currentRoute != ShajamalRoutes.SPAM_DATABASE
+                val showChrome = currentNavRoute == ShajamalRoutes.MAIN_TABS
 
                 LaunchedEffect(showChrome) {
                     if (showChrome) {
@@ -336,7 +346,7 @@ private fun ShajamalApp(
                                 tonalElevation = 0.dp
                             ) {
                                 mainDestinations.forEach { dest ->
-                                    val selected = currentRoute == dest.route
+                                    val selected = activeMainTab == dest.route
                                     NavigationBarItem(
                                         selected = selected,
                                         onClick = { navigateTopLevel(dest.route) },
@@ -372,7 +382,7 @@ private fun ShajamalApp(
                                 modifier = Modifier.fillMaxHeight()
                             ) {
                                 mainDestinations.forEach { dest ->
-                                    val selected = currentRoute == dest.route
+                                    val selected = activeMainTab == dest.route
                                     NavigationRailItem(
                                         selected = selected,
                                         onClick = { navigateTopLevel(dest.route) },
@@ -399,196 +409,217 @@ private fun ShajamalApp(
                         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                             NavHost(
                                 navController = navController,
-                                startDestination = initialRoute,
+                                startDestination = ShajamalRoutes.MAIN_TABS,
                                 enterTransition = { EnterTransition.None },
                                 exitTransition = { ExitTransition.None },
                                 popEnterTransition = { EnterTransition.None },
                                 popExitTransition = { ExitTransition.None }
                             ) {
-                                composable(ShajamalRoutes.RECENTS) {
-                                    val groupedCallLogs by viewModel.groupedCallLogs.collectAsStateWithLifecycle()
-                                    val isCallLogsLoading by viewModel.isCallLogsLoading.collectAsStateWithLifecycle()
-                                    val callAnalytics by viewModel.callAnalytics.collectAsStateWithLifecycle()
-                                    val todayCallCount by viewModel.todayCallCount.collectAsStateWithLifecycle()
-                                    val callLogFilter by viewModel.callLogFilter.collectAsStateWithLifecycle()
-                                    val recentsSearchQuery by viewModel.recentsSearchQuery.collectAsStateWithLifecycle()
-                                    val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
-                                    val blockedCanonicalKeys by viewModel.blockedCanonicalKeys.collectAsStateWithLifecycle()
-                                    val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
-                                    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
-                                    val communityReports by viewModel.communityReports.collectAsStateWithLifecycle()
-                                    val privateContacts by viewModel.privateContacts.collectAsStateWithLifecycle()
-                                    val simBalances by viewModel.simBalances.collectAsStateWithLifecycle()
-                                    val recentsCallerReports by viewModel.recentsCallerReports.collectAsStateWithLifecycle()
+                                composable(ShajamalRoutes.MAIN_TABS) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        if (ShajamalRoutes.RECENTS in visitedTabs) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .activeTabSlot(activeMainTab == ShajamalRoutes.RECENTS)
+                                            ) {
+                                                val groupedCallLogs by viewModel.groupedCallLogs.collectAsStateWithLifecycle()
+                                                val isCallLogsLoading by viewModel.isCallLogsLoading.collectAsStateWithLifecycle()
+                                                val callAnalytics by viewModel.callAnalytics.collectAsStateWithLifecycle()
+                                                val todayCallCount by viewModel.todayCallCount.collectAsStateWithLifecycle()
+                                                val callLogFilter by viewModel.callLogFilter.collectAsStateWithLifecycle()
+                                                val recentsSearchQuery by viewModel.recentsSearchQuery.collectAsStateWithLifecycle()
+                                                val blockedNumbers by viewModel.blockedNumbers.collectAsStateWithLifecycle()
+                                                val blockedCanonicalKeys by viewModel.blockedCanonicalKeys.collectAsStateWithLifecycle()
+                                                val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
+                                                val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+                                                val communityReports by viewModel.communityReports.collectAsStateWithLifecycle()
+                                                val privateContacts by viewModel.privateContacts.collectAsStateWithLifecycle()
+                                                val recentsCallerReports by viewModel.recentsCallerReports.collectAsStateWithLifecycle()
 
-                                    RecentsScreen(
-                                        groupedLogs = groupedCallLogs,
-                                        isLoading = isCallLogsLoading,
-                                        analytics = callAnalytics,
-                                        todayCallCount = todayCallCount,
-                                        activeFilter = callLogFilter,
-                                        searchQuery = recentsSearchQuery,
-                                        blockedNumbers = blockedNumbers,
-                                        numberNotes = numberNotes,
-                                        permissions = permissions,
-                                        settings = settings,
-                                        communityReports = communityReports,
-                                        privateContacts = privateContacts,
-                                        simBalances = simBalances,
-                                        blockedCanonicalKeys = blockedCanonicalKeys,
-                                        callerReports = recentsCallerReports,
-                                        onSelectFilter = viewModel::setCallLogFilter,
-                                        onSearchQueryChange = viewModel::setRecentsSearchQuery,
-                                        onCallChooseSim = viewModel::openSimPickerForNumber,
-                                        onCallWithSim = viewModel::placeCall,
-                                        onEditInDialer = { number ->
-                                            viewModel.setDialNumber(number)
-                                            navigateTopLevel(ShajamalRoutes.KEYPAD)
-                                        },
-                                        onSaveNote = viewModel::saveNumberNote,
-                                        onToggleBlock = { num, blocked ->
-                                            if (blocked) {
-                                                viewModel.unblockNumber(num)
-                                            } else {
-                                                viewModel.blockNumber(num)
-                                            }
-                                        },
-                                        onSubmitSpamReport = viewModel::reportSpamNumber,
-                                        onRefreshSimBalance = { slotIdx ->
-                                            viewModel.refreshSimBalance(slotIdx, silent = false)
-                                        },
-                                        onUpdateSimUssdCode = viewModel::updateSimUssdCode,
-                                        onDialSimUssd = viewModel::dialSimUssd,
-                                        onDeleteEntry = viewModel::deleteCallLogItem,
-                                        onDeleteMultiple = viewModel::deleteMultipleCallLogs,
-                                        onOpenFullProfile = { group ->
-                                            viewModel.openCallerProfile(
-                                                CallerProfileTarget(
-                                                    number = group.number,
-                                                    displayTitle = group.displayTitle,
-                                                    photoUri = group.photoUri,
-                                                    contactId = group.contactId
+                                                RecentsScreen(
+                                                    groupedLogs = groupedCallLogs,
+                                                    isLoading = isCallLogsLoading,
+                                                    analytics = callAnalytics,
+                                                    todayCallCount = todayCallCount,
+                                                    activeFilter = callLogFilter,
+                                                    searchQuery = recentsSearchQuery,
+                                                    blockedNumbers = blockedNumbers,
+                                                    numberNotes = numberNotes,
+                                                    permissions = permissions,
+                                                    settings = settings,
+                                                    communityReports = communityReports,
+                                                    privateContacts = privateContacts,
+                                                    blockedCanonicalKeys = blockedCanonicalKeys,
+                                                    callerReports = recentsCallerReports,
+                                                    onSelectFilter = viewModel::setCallLogFilter,
+                                                    onSearchQueryChange = viewModel::setRecentsSearchQuery,
+                                                    onCallChooseSim = viewModel::openSimPickerForNumber,
+                                                    onCallWithSim = viewModel::placeCall,
+                                                    onEditInDialer = { number ->
+                                                        viewModel.setDialNumber(number)
+                                                        navigateTopLevel(ShajamalRoutes.KEYPAD)
+                                                    },
+                                                    onSaveNote = viewModel::saveNumberNote,
+                                                    onToggleBlock = { num, blocked ->
+                                                        if (blocked) {
+                                                            viewModel.unblockNumber(num)
+                                                        } else {
+                                                            viewModel.blockNumber(num)
+                                                        }
+                                                    },
+                                                    onSubmitSpamReport = viewModel::reportSpamNumber,
+                                                    onDeleteEntry = viewModel::deleteCallLogItem,
+                                                    onDeleteMultiple = viewModel::deleteMultipleCallLogs,
+                                                    onOpenFullProfile = { group ->
+                                                        viewModel.openCallerProfile(
+                                                            CallerProfileTarget(
+                                                                number = group.number,
+                                                                displayTitle = group.displayTitle,
+                                                                photoUri = group.photoUri,
+                                                                contactId = group.contactId
+                                                            )
+                                                        )
+                                                        navController.navigate(ShajamalRoutes.CONTACT_PROFILE)
+                                                    },
+                                                    onOpenSettings = {
+                                                        navController.navigate(ShajamalRoutes.SETTINGS)
+                                                    },
+                                                    onOpenPrivacyDashboard = {
+                                                        navController.navigate(ShajamalRoutes.PRIVACY_DASHBOARD)
+                                                    },
+                                                    onRequestPermissions = {
+                                                        permissionsLauncher.launch(requiredPermissions)
+                                                    }
                                                 )
-                                            )
-                                            navController.navigate(ShajamalRoutes.CONTACT_PROFILE)
-                                        },
-                                        onOpenSettings = {
-                                            navController.navigate(ShajamalRoutes.SETTINGS)
-                                        },
-                                        onOpenPrivacyDashboard = {
-                                            navController.navigate(ShajamalRoutes.PRIVACY_DASHBOARD)
-                                        },
-                                        onRequestPermissions = {
-                                            permissionsLauncher.launch(requiredPermissions)
-                                        }
-                                    )
-                                }
-
-                                composable(ShajamalRoutes.KEYPAD) {
-                                    val dialField by viewModel.dialField.collectAsStateWithLifecycle()
-                                    val exactDialedContact by viewModel.exactDialedContact.collectAsStateWithLifecycle()
-                                    val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
-                                    val blockedCanonicalKeys by viewModel.blockedCanonicalKeys.collectAsStateWithLifecycle()
-                                    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
-                                    val isDefaultDialer by viewModel.isDefaultDialer.collectAsStateWithLifecycle()
-
-                                    val currentCanonical = PhoneNumberInfoHelper.canonicalKey(dialField.text)
-                                    val isCurrentNumberBlocked = currentCanonical.isNotBlank() &&
-                                        currentCanonical in blockedCanonicalKeys
-
-                                    DialerScreen(
-                                        dialField = dialField,
-                                        simSlots = simSlots,
-                                        exactMatchedContact = exactDialedContact,
-                                        numberNotes = numberNotes,
-                                        isCurrentNumberBlocked = isCurrentNumberBlocked,
-                                        settings = settings,
-                                        permissions = permissions,
-                                        isDefaultDialer = isDefaultDialer,
-                                        onDialFieldChange = viewModel::onDialFieldChange,
-                                        onAppendChar = viewModel::appendDialChar,
-                                        onLongPressZero = viewModel::replaceLastCharWithPlus,
-                                        onBackspace = viewModel::backspaceDialChar,
-                                        onClearAll = viewModel::clearDialNumber,
-                                        onCallSlot = viewModel::callCurrentNumberOnSlot,
-                                        onAskSimCall = viewModel::requestAskSimForCurrentNumber,
-                                        onSaveNote = viewModel::saveNumberNote,
-                                        onToggleBlock = { num, blocked ->
-                                            if (blocked) {
-                                                viewModel.unblockNumber(num)
-                                            } else {
-                                                viewModel.blockNumber(num)
                                             }
-                                        },
-                                        onRequestPermissions = {
-                                            permissionsLauncher.launch(requiredPermissions)
-                                        },
-                                        onOpenSettings = {
-                                            navController.navigate(ShajamalRoutes.SETTINGS)
-                                        },
-                                        onRequestDefaultDialer = ::requestDefaultDialer,
-                                        onRequestFullScreenIntent = ::openFullScreenIntentSettings
-                                    )
-                                }
+                                        }
 
-                                composable(ShajamalRoutes.CONTACTS) {
-                                    val contacts by viewModel.filteredContacts.collectAsStateWithLifecycle()
-                                    val isContactsLoading by viewModel.isContactsLoading.collectAsStateWithLifecycle()
-                                    val contactSearchQuery by viewModel.contactSearchQuery.collectAsStateWithLifecycle()
-                                    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+                                        if (ShajamalRoutes.KEYPAD in visitedTabs) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .activeTabSlot(activeMainTab == ShajamalRoutes.KEYPAD)
+                                            ) {
+                                                val dialField by viewModel.dialField.collectAsStateWithLifecycle()
+                                                val exactDialedContact by viewModel.exactDialedContact.collectAsStateWithLifecycle()
+                                                val numberNotes by viewModel.numberNotes.collectAsStateWithLifecycle()
+                                                val blockedCanonicalKeys by viewModel.blockedCanonicalKeys.collectAsStateWithLifecycle()
+                                                val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+                                                val isDefaultDialer by viewModel.isDefaultDialer.collectAsStateWithLifecycle()
 
-                                    ContactsScreen(
-                                        contacts = contacts,
-                                        isLoading = isContactsLoading,
-                                        searchQuery = contactSearchQuery,
-                                        permissions = permissions,
-                                        onSearchQueryChange = viewModel::setContactSearchQuery,
-                                        onCallWithSim = viewModel::placeCall,
-                                        onEditInDialer = { number ->
-                                            viewModel.setDialNumber(number)
-                                            navigateTopLevel(ShajamalRoutes.KEYPAD)
-                                        },
-                                        onCopyNumber = { num ->
-                                            viewModel.emitMessage("Copied $num to clipboard")
-                                        },
-                                        onOpenProfile = { contact ->
-                                            viewModel.openCallerProfile(
-                                                CallerProfileTarget(
-                                                    number = contact.primaryNumber,
-                                                    displayTitle = contact.name,
-                                                    photoUri = contact.photoUri,
-                                                    contactId = contact.id,
-                                                    isStarred = contact.isStarred
+                                                val currentCanonical = PhoneNumberInfoHelper.canonicalKey(dialField.text)
+                                                val isCurrentNumberBlocked = currentCanonical.isNotBlank() &&
+                                                    currentCanonical in blockedCanonicalKeys
+
+                                                DialerScreen(
+                                                    dialField = dialField,
+                                                    simSlots = simSlots,
+                                                    exactMatchedContact = exactDialedContact,
+                                                    numberNotes = numberNotes,
+                                                    isCurrentNumberBlocked = isCurrentNumberBlocked,
+                                                    settings = settings,
+                                                    permissions = permissions,
+                                                    isDefaultDialer = isDefaultDialer,
+                                                    onDialFieldChange = viewModel::onDialFieldChange,
+                                                    onAppendChar = viewModel::appendDialChar,
+                                                    onLongPressZero = viewModel::replaceLastCharWithPlus,
+                                                    onBackspace = viewModel::backspaceDialChar,
+                                                    onClearAll = viewModel::clearDialNumber,
+                                                    onCallSlot = viewModel::callCurrentNumberOnSlot,
+                                                    onAskSimCall = viewModel::requestAskSimForCurrentNumber,
+                                                    onSaveNote = viewModel::saveNumberNote,
+                                                    onToggleBlock = { num, blocked ->
+                                                        if (blocked) {
+                                                            viewModel.unblockNumber(num)
+                                                        } else {
+                                                            viewModel.blockNumber(num)
+                                                        }
+                                                    },
+                                                    onRequestPermissions = {
+                                                        permissionsLauncher.launch(requiredPermissions)
+                                                    },
+                                                    onOpenSettings = {
+                                                        navController.navigate(ShajamalRoutes.SETTINGS)
+                                                    },
+                                                    onRequestDefaultDialer = ::requestDefaultDialer,
+                                                    onRequestFullScreenIntent = ::openFullScreenIntentSettings
                                                 )
-                                            )
-                                            navController.navigate(ShajamalRoutes.CONTACT_PROFILE)
-                                        },
-                                        onOpenSettings = {
-                                            navController.navigate(ShajamalRoutes.SETTINGS)
-                                        },
-                                        onRequestPermissions = {
-                                            permissionsLauncher.launch(requiredPermissions)
+                                            }
                                         }
-                                    )
-                                }
 
-                                composable(ShajamalRoutes.FAVORITES) {
-                                    val favorites by viewModel.favoriteContacts.collectAsStateWithLifecycle()
-                                    val isContactsLoading by viewModel.isContactsLoading.collectAsStateWithLifecycle()
-                                    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+                                        if (ShajamalRoutes.CONTACTS in visitedTabs) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .activeTabSlot(activeMainTab == ShajamalRoutes.CONTACTS)
+                                            ) {
+                                                val contacts by viewModel.filteredContacts.collectAsStateWithLifecycle()
+                                                val isContactsLoading by viewModel.isContactsLoading.collectAsStateWithLifecycle()
+                                                val contactSearchQuery by viewModel.contactSearchQuery.collectAsStateWithLifecycle()
+                                                val permissions by viewModel.permissions.collectAsStateWithLifecycle()
 
-                                    FavoritesScreen(
-                                        favorites = favorites,
-                                        isLoading = isContactsLoading,
-                                        permissions = permissions,
-                                        onCallContact = viewModel::openSimPickerForNumber,
-                                        onOpenSettings = {
-                                            navController.navigate(ShajamalRoutes.SETTINGS)
-                                        },
-                                        onRequestPermissions = {
-                                            permissionsLauncher.launch(requiredPermissions)
+                                                ContactsScreen(
+                                                    contacts = contacts,
+                                                    isLoading = isContactsLoading,
+                                                    searchQuery = contactSearchQuery,
+                                                    permissions = permissions,
+                                                    onSearchQueryChange = viewModel::setContactSearchQuery,
+                                                    onCallWithSim = viewModel::placeCall,
+                                                    onEditInDialer = { number ->
+                                                        viewModel.setDialNumber(number)
+                                                        navigateTopLevel(ShajamalRoutes.KEYPAD)
+                                                    },
+                                                    onCopyNumber = { num ->
+                                                        viewModel.emitMessage("Copied $num to clipboard")
+                                                    },
+                                                    onOpenProfile = { contact ->
+                                                        viewModel.openCallerProfile(
+                                                            CallerProfileTarget(
+                                                                number = contact.primaryNumber,
+                                                                displayTitle = contact.name,
+                                                                photoUri = contact.photoUri,
+                                                                contactId = contact.id,
+                                                                isStarred = contact.isStarred
+                                                            )
+                                                        )
+                                                        navController.navigate(ShajamalRoutes.CONTACT_PROFILE)
+                                                    },
+                                                    onOpenSettings = {
+                                                        navController.navigate(ShajamalRoutes.SETTINGS)
+                                                    },
+                                                    onRequestPermissions = {
+                                                        permissionsLauncher.launch(requiredPermissions)
+                                                    }
+                                                )
+                                            }
                                         }
-                                    )
+
+                                        if (ShajamalRoutes.FAVORITES in visitedTabs) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .activeTabSlot(activeMainTab == ShajamalRoutes.FAVORITES)
+                                            ) {
+                                                val favorites by viewModel.favoriteContacts.collectAsStateWithLifecycle()
+                                                val isContactsLoading by viewModel.isContactsLoading.collectAsStateWithLifecycle()
+                                                val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+
+                                                FavoritesScreen(
+                                                    favorites = favorites,
+                                                    isLoading = isContactsLoading,
+                                                    permissions = permissions,
+                                                    onCallContact = viewModel::openSimPickerForNumber,
+                                                    onOpenSettings = {
+                                                        navController.navigate(ShajamalRoutes.SETTINGS)
+                                                    },
+                                                    onRequestPermissions = {
+                                                        permissionsLauncher.launch(requiredPermissions)
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
 
                                 composable(ShajamalRoutes.SETTINGS) {
@@ -846,6 +877,17 @@ private fun ShajamalApp(
                     onDismiss = viewModel::dismissSimPicker
                 )
             }
+        }
+    }
+}
+
+private fun Modifier.activeTabSlot(isActive: Boolean): Modifier = layout { measurable, constraints ->
+    if (!isActive) {
+        layout(0, 0) {}
+    } else {
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, placeable.height) {
+            placeable.placeRelative(0, 0)
         }
     }
 }
