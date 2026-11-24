@@ -78,6 +78,7 @@ import com.example.data.model.DoodleDesign
 import com.example.data.model.DualSimMode
 import com.example.data.model.PermissionSnapshot
 import com.example.data.model.SimSlotInfo
+import com.example.ui.components.DisplayFontSettingsCard
 import com.example.ui.components.DoodleCanvas
 import com.example.ui.theme.AppPictureTheme
 import com.example.ui.theme.CallMissedRed
@@ -109,6 +110,8 @@ fun SettingsScreen(
     onToggleDtmfTones: (Boolean) -> Unit,
     onToggleHapticFeedback: (Boolean) -> Unit,
     onToggleAutoCleanPaste: (Boolean) -> Unit,
+    onDisplayScaleChange: (Float) -> Unit,
+    onFontScaleChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
@@ -270,6 +273,16 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
+
+        // Display Size & Font Size Settings Card
+        item {
+            DisplayFontSettingsCard(
+                displayScale = settings.displayScale,
+                fontScale = settings.fontScale,
+                onDisplayScaleChange = onDisplayScaleChange,
+                onFontScaleChange = onFontScaleChange
+            )
         }
 
         // Themes & Pictures Preview Strip Card

@@ -3,6 +3,7 @@ package com.example
 import com.example.data.model.CallDirection
 import com.example.data.model.CallLogItem
 import com.example.data.model.ContactItem
+import com.example.data.model.DialerSettings
 import com.example.data.model.DoodleDesign
 import com.example.data.telephony.DeviceDirectoryRepository
 import com.example.data.telephony.DualSimCallManager
@@ -95,5 +96,12 @@ class DialerLogicTest {
         val searchedGroups = ShajamalViewModel.groupAndFilterCallLogs(logs, contacts, CallLogFilter.ALL, "mohtar")
         assertEquals(1, searchedGroups.size)
         assertEquals(3, searchedGroups[0].callCount)
+    }
+
+    @Test
+    fun `dialerSettings defaults to 100 percent display and font scale`() {
+        val defaults = DialerSettings()
+        assertEquals(1.0f, defaults.displayScale, 0.001f)
+        assertEquals(1.0f, defaults.fontScale, 0.001f)
     }
 }

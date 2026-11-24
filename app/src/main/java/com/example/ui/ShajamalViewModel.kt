@@ -25,14 +25,12 @@ import com.example.data.model.DoodleDesign
 import com.example.data.model.DualSimMode
 import com.example.data.model.FavoriteGroup
 import com.example.data.model.GroupedCallLogItem
-import com.example.data.model.OutgoingAnimationState
 import com.example.data.model.PermissionSnapshot
 import com.example.data.model.SimSlotInfo
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.telephony.DeviceDirectoryRepository
 import com.example.data.telephony.DualSimCallManager
 import com.example.data.telephony.PhoneNumberInfoHelper
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -223,9 +221,6 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
     private val _simPickerNumber = MutableStateFlow<String?>(null)
     val simPickerNumber: StateFlow<String?> = _simPickerNumber.asStateFlow()
 
-    private val _outgoingAnimation = MutableStateFlow<OutgoingAnimationState?>(null)
-    val outgoingAnimation: StateFlow<OutgoingAnimationState?> = _outgoingAnimation.asStateFlow()
-
     private val _events = MutableSharedFlow<String>()
     val events: SharedFlow<String> = _events.asSharedFlow()
 
@@ -344,13 +339,20 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
             emitMessage("Enter or paste a phone number first.")
             return
         }
-        _simPickerNumber.value = number
+        openSimPickerForNumber(number)
     }
 
     fun openSimPickerForNumber(number: String) {
         val cleaned = DualSimCallManager.sanitizeDialNumber(number)
-        if (cleaned.isNotBlank()) {
-            _simPickerNumber.value = cleaned
+        if (cleaned.isBlank()) return
+
+        val activeSlots = _simSlots.value.filter { it.isActive && it.phoneAccountHandle != null }
+        when {
+            activeSlots.size == 1 -> placeCall(cleaned, activeSlots.first().slotIndex)
+            settings.value.dualSimMode == DualSimMode.DUAL_BUTTONS && activeSlots.isNotEmpty() -> {
+                placeCall(cleaned, activeSlots.first().slotIndex)
+            }
+            else -> _simPickerNumber.value = cleaned
         }
     }
 
@@ -390,31 +392,18 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
             }
         }
 
-        viewModelScope.launch {
-            CallRepository.setPendingOutgoingCaller(
-                number = sanitized,
-                callerName = matchedContact?.name,
-                photoUri = matchedContact?.photoUri
-            )
-            _outgoingAnimation.value = OutgoingAnimationState(
-                number = sanitized,
-                displayName = matchedContact?.name,
-                simLabel = slot.label,
-                carrierName = slot.carrierName,
-                slotIndex = slotIndex,
-                photoUri = matchedContact?.photoUri
-            )
-            val result = dualSimCallManager.placeCall(sanitized, slotIndex)
-            delay(500L)
-            _outgoingAnimation.value = null
-
-            when (result) {
-                is CallPlacementResult.Success -> Unit
-                is CallPlacementResult.SimUnavailable -> emitMessage(result.reason)
-                is CallPlacementResult.PermissionRequired -> _permissionPromptTrigger.emit(Unit)
-                is CallPlacementResult.InvalidNumber -> emitMessage("Enter or paste a valid phone number.")
-                is CallPlacementResult.Error -> emitMessage(result.message)
-            }
+        CallRepository.setPendingOutgoingCaller(
+            number = sanitized,
+            callerName = matchedContact?.name,
+            photoUri = matchedContact?.photoUri
+        )
+        val result = dualSimCallManager.placeCall(sanitized, slotIndex)
+        when (result) {
+            is CallPlacementResult.Success -> Unit
+            is CallPlacementResult.SimUnavailable -> emitMessage(result.reason)
+            is CallPlacementResult.PermissionRequired -> viewModelScope.launch { _permissionPromptTrigger.emit(Unit) }
+            is CallPlacementResult.InvalidNumber -> emitMessage("Enter or paste a valid phone number.")
+            is CallPlacementResult.Error -> emitMessage(result.message)
         }
     }
 
@@ -503,6 +492,14 @@ class ShajamalViewModel(application: Application) : AndroidViewModel(application
 
     fun setLanguage(language: AppLanguage) {
         viewModelScope.launch { settingsDataStore.setLanguage(language) }
+    }
+
+    fun setDisplayScale(scale: Float) {
+        viewModelScope.launch { settingsDataStore.setDisplayScale(scale) }
+    }
+
+    fun setFontScale(scale: Float) {
+        viewModelScope.launch { settingsDataStore.setFontScale(scale) }
     }
 
     fun setSimRingtone(slotIndex: Int, uri: Uri?) {

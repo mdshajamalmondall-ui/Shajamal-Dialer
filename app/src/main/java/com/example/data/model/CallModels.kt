@@ -117,6 +117,8 @@ data class DialerSettings(
     val dualSimMode: DualSimMode = DualSimMode.ASK_ON_CALL,
     val autoCleanPastedNumber: Boolean = true,
     val language: AppLanguage = AppLanguage.ENGLISH,
+    val displayScale: Float = 1.0f,
+    val fontScale: Float = 1.0f,
     val sim1RingtoneUri: String? = null,
     val sim1RingtoneName: String? = null,
     val sim2RingtoneUri: String? = null,

@@ -11,9 +11,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -64,7 +61,6 @@ import com.example.data.model.CallerProfileTarget
 import com.example.data.model.FavoriteGroup
 import com.example.data.telephony.PhoneNumberInfoHelper
 import com.example.ui.ShajamalViewModel
-import com.example.ui.components.OutgoingCallOverlay
 import com.example.ui.components.SimPickerBottomSheet
 import com.example.ui.components.ThemeBackdrop
 import com.example.ui.navigation.ShajamalRoutes
@@ -151,7 +147,6 @@ private fun ShajamalApp(
     val exactDialedContact by viewModel.exactDialedContact.collectAsStateWithLifecycle()
     val contactSearchQuery by viewModel.contactSearchQuery.collectAsStateWithLifecycle()
     val simPickerNumber by viewModel.simPickerNumber.collectAsStateWithLifecycle()
-    val outgoingAnimation by viewModel.outgoingAnimation.collectAsStateWithLifecycle()
 
     val activeTheme = ThemeCatalog.byId(settings.selectedThemeId)
     val navController = rememberNavController()
@@ -227,7 +222,12 @@ private fun ShajamalApp(
         PhoneNumberInfoHelper.canonicalKey(it.number) == currentCanonical
     }
 
-    ShajamalTheme(pictureTheme = activeTheme, language = settings.language) {
+    ShajamalTheme(
+        pictureTheme = activeTheme,
+        language = settings.language,
+        displayScale = settings.displayScale,
+        fontScale = settings.fontScale
+    ) {
         val strings = LocalAppStrings.current
         val mainDestinations = listOf(
             NavDestinationItem(
@@ -508,7 +508,9 @@ private fun ShajamalApp(
                                         onToggleDualSimMode = viewModel::setDualSimMode,
                                         onToggleDtmfTones = viewModel::setDtmfTonesEnabled,
                                         onToggleHapticFeedback = viewModel::setHapticFeedbackEnabled,
-                                        onToggleAutoCleanPaste = viewModel::setAutoCleanPastedNumber
+                                        onToggleAutoCleanPaste = viewModel::setAutoCleanPastedNumber,
+                                        onDisplayScaleChange = viewModel::setDisplayScale,
+                                        onFontScaleChange = viewModel::setFontScale
                                     )
                                 }
 
@@ -591,16 +593,6 @@ private fun ShajamalApp(
                     },
                     onDismiss = viewModel::dismissSimPicker
                 )
-            }
-
-            AnimatedVisibility(
-                visible = outgoingAnimation != null,
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                outgoingAnimation?.let { animState ->
-                    OutgoingCallOverlay(state = animState)
-                }
             }
         }
     }

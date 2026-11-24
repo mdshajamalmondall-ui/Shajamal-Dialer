@@ -181,7 +181,8 @@ fun DialerScreen(
         modifier = modifier.fillMaxSize()
     ) {
         val isCompactHeight = maxHeight < 640.dp
-        val keyWidth = if (isCompactHeight) 86.dp else 94.dp
+        val maxKeyForWidth = ((maxWidth - 48.dp) / 3.3f).coerceIn(68.dp, 94.dp)
+        val keyWidth = if (isCompactHeight) minOf(86.dp, maxKeyForWidth) else maxKeyForWidth
         val keyHeight = if (isCompactHeight) 52.dp else 58.dp
         val rowGap = if (isCompactHeight) 7.dp else 10.dp
 

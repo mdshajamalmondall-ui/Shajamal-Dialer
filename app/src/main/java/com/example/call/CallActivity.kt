@@ -146,7 +146,12 @@ class CallActivity : ComponentActivity() {
                 }
             }
 
-            ShajamalTheme(pictureTheme = theme, language = settings.language) {
+            ShajamalTheme(
+                pictureTheme = theme,
+                language = settings.language,
+                displayScale = settings.displayScale,
+                fontScale = settings.fontScale
+            ) {
                 ThemeBackdrop(
                     theme = theme,
                     doodleDesign = settings.selectedDoodle,

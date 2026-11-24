@@ -155,7 +155,17 @@ data class AppStrings(
     val messageLabel: String,
     val slideToAnswer: String,
     val declineCall: String,
-    val quickReplyPrompt: String
+    val quickReplyPrompt: String,
+    val displayAndFontTitle: String,
+    val displayAndFontSubtitle: String,
+    val displaySizeLabel: String,
+    val fontSizeLabel: String,
+    val sizeSmall: String,
+    val sizeDefault: String,
+    val sizeLarge: String,
+    val sizeExtraLarge: String,
+    val previewSampleCaller: String,
+    val previewSampleSubtitle: String
 )
 
 val EnglishStrings = AppStrings(
@@ -310,7 +320,17 @@ val EnglishStrings = AppStrings(
     messageLabel = "Message",
     slideToAnswer = "slide to answer",
     declineCall = "Decline",
-    quickReplyPrompt = "Quick Reply Message"
+    quickReplyPrompt = "Quick Reply Message",
+    displayAndFontTitle = "Display & Font Size",
+    displayAndFontSubtitle = "Adjust screen zoom and text size across the app",
+    displaySizeLabel = "Display Size",
+    fontSizeLabel = "Font Size",
+    sizeSmall = "Small",
+    sizeDefault = "Default",
+    sizeLarge = "Large",
+    sizeExtraLarge = "Max",
+    previewSampleCaller = "Torikul Islam",
+    previewSampleSubtitle = "Outgoing • SIM 1 • 01:24"
 )
 
 val BengaliStrings = AppStrings(
@@ -465,7 +485,17 @@ val BengaliStrings = AppStrings(
     messageLabel = "মেসেজ",
     slideToAnswer = "স্লাইড করে ধরুন",
     declineCall = "কল কাটুন",
-    quickReplyPrompt = "দ্রুত মেসেজ পাঠান"
+    quickReplyPrompt = "দ্রুত মেসেজ পাঠান",
+    displayAndFontTitle = "ডিসপ্লে ও ফন্ট সাইজ",
+    displayAndFontSubtitle = "অ্যাপের ডিসপ্লে জুম ও লেখার সাইজ পরিবর্তন করুন",
+    displaySizeLabel = "ডিসপ্লে সাইজ",
+    fontSizeLabel = "ফন্ট সাইজ",
+    sizeSmall = "ছোট",
+    sizeDefault = "স্বাভাবিক",
+    sizeLarge = "বড়",
+    sizeExtraLarge = "অনেক বড়",
+    previewSampleCaller = "তরিকুল ইসলাম",
+    previewSampleSubtitle = "আউটগোয়িং • SIM 1 • ০১:২৪"
 )
 
 fun stringsFor(language: AppLanguage): AppStrings =

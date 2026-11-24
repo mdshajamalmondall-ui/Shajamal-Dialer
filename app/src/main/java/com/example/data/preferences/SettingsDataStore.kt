@@ -49,6 +49,8 @@ class SettingsDataStore(private val context: Context) {
         val SIM1_RINGTONE_NAME = stringPreferencesKey("sim1_ringtone_name")
         val SIM2_RINGTONE_URI = stringPreferencesKey("sim2_ringtone_uri")
         val SIM2_RINGTONE_NAME = stringPreferencesKey("sim2_ringtone_name")
+        val DISPLAY_SCALE = floatPreferencesKey("display_scale")
+        val FONT_SCALE = floatPreferencesKey("font_scale")
     }
 
     val settingsFlow: Flow<DialerSettings> = context.settingsDataStore.data.map { prefs ->
@@ -70,6 +72,8 @@ class SettingsDataStore(private val context: Context) {
             dualSimMode = dualSimMode,
             autoCleanPastedNumber = prefs[Keys.AUTO_CLEAN_PASTED_NUMBER] ?: true,
             language = language,
+            displayScale = (prefs[Keys.DISPLAY_SCALE] ?: 1.0f).coerceIn(0.85f, 1.20f),
+            fontScale = (prefs[Keys.FONT_SCALE] ?: 1.0f).coerceIn(0.85f, 1.35f),
             sim1RingtoneUri = prefs[Keys.SIM1_RINGTONE_URI],
             sim1RingtoneName = prefs[Keys.SIM1_RINGTONE_NAME],
             sim2RingtoneUri = prefs[Keys.SIM2_RINGTONE_URI],
@@ -236,6 +240,18 @@ class SettingsDataStore(private val context: Context) {
     suspend fun setLanguage(language: AppLanguage) {
         context.settingsDataStore.edit { prefs ->
             prefs[Keys.APP_LANGUAGE] = language.name
+        }
+    }
+
+    suspend fun setDisplayScale(scale: Float) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[Keys.DISPLAY_SCALE] = scale.coerceIn(0.85f, 1.20f)
+        }
+    }
+
+    suspend fun setFontScale(scale: Float) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[Keys.FONT_SCALE] = scale.coerceIn(0.85f, 1.35f)
         }
     }
 
